@@ -1,0 +1,70 @@
+import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from "react";
+import { Session, Doc, Message, AuthPageProps, SidebarProps, ChatPageProps, UploadPageProps } from './types.tsx';  // Import interfaces
+function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onNewChat, userName, onLogout }: SidebarProps) {
+  return (
+    <>
+      
+      <div className="sidebar-header">
+        <div className="logo" style={{ fontSize: 16 }}>
+          <div className="logo-icon" style={{ width: 28, height: 28, fontSize: 12 }}>✦</div>
+          NovaMind
+        </div>
+        <button className="new-chat-btn" title="New chat" onClick={onNewChat}>✏</button>
+      </div>
+
+      <div className="sidebar-nav">
+        <button className={`nav-item ${page === "chat" ? "active" : ""}`} onClick={() => setPage("chat")}>
+          <span className="nav-icon">💬</span> Chat
+        </button>
+        <button className={`nav-item ${page === "upload" ? "active" : ""}`} onClick={() => setPage("upload")}>
+          <span className="nav-icon">📁</span> Documents
+        </button>
+      </div>
+
+      <div className="sessions-section">
+        <div className="sessions-label">Recent chats</div>
+        {sessions.map((s: Session) => (
+          <div
+            key={s.id}
+            className={`session-item ${activeSession === s.id ? "active" : ""}`}
+            onClick={() => { setActiveSession(s.id); setPage("chat"); }}
+          >
+            <div className="session-dot" style={{ background: activeSession === s.id ? "var(--accent)" : undefined }} />
+            <div className="session-title">{s.title}</div>
+            <div className="session-time">{s.time}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="sidebar-footer">
+        <div className="user-card">
+          <div className="avatar">{userName.charAt(0).toUpperCase()}</div>
+          <div className="user-info">
+            <div className="user-name">{userName}</div>
+            <div className="user-plan">Local · llama3.2:1b</div>
+          </div>
+          <span style={{ color: "var(--text3)", fontSize: 14 }}>⚙</span>
+        </div>
+        <button
+        onClick={onLogout}
+        title="Log out"
+        style={{
+          background: "transparent",
+          border: "none",
+          color: "var(--text3)",
+          cursor: "pointer",
+          fontSize: 16,
+          padding: "4px",
+          borderRadius: "6px",
+          transition: "var(--transition)",
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = "var(--danger)")}
+        onMouseLeave={e => (e.currentTarget.style.color = "var(--text3)")}
+      >
+        ⏻
+      </button>
+      </div>
+    </>
+  );
+}
+export default Sidebar;
