@@ -26,7 +26,7 @@ UPLOAD_DIR = "./uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── PostgreSQL Setup ───────────────────────────────────────────────────────────
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://postgres:password@localhost:5432/chatbot-rag")
+POSTGRES_URL = os.getenv("POSTGRES_URL")
 engine = create_engine(POSTGRES_URL)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -64,8 +64,8 @@ Base.metadata.create_all(bind=engine)
 
 # ── MongoDB Setup ──────────────────────────────────────────────────────────────
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-MONGO_DB = os.getenv("MONGO_DB", "chatbot-rag")
-mongo_client = MongoClient(MONGO_URL)
+MONGO_DB = os.getenv("MONGO_DB", "chatbot_rag")
+mongo_client = MongoClient(MONGO_URL, authSource="admin")
 mongo_db = mongo_client[MONGO_DB]
 documents_collection = mongo_db["documents"]
 

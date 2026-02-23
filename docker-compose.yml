@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: chatbot_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "root"
+      POSTGRES_DB: "chatbot_rag"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7
+    container_name: chatbot_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    command: ["mongod", "--quiet", "--logpath", "/dev/null"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: chatbot_backend
+    restart: always
+    environment:
+      POSTGRES_URL: "postgresql://postgres:root@postgres:5432/chatbot_rag"
+      MONGO_URL: "mongodb://mongodb:27017"
+      MONGO_DB: "chatbot_rag"
+      SECRET_KEY: "secret_key"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Backend:/app
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    container_name: chatbot_frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./Frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  mongo_data:

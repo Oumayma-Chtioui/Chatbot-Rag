@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
+sqlalchemy
+psycopg2-binary
+pymongo
+python-multipart
+python-dotenv
+langchain
+langchain-community
+langchain-ollama
+langchain-text-splitters
+chromadb
+pypdf
