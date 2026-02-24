@@ -9,12 +9,7 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const features = [
-    { icon: "📄", text: "Chat with any PDF or document" },
-    { icon: "🔗", text: "Load web pages as context" },
-    { icon: "🖼️", text: "Analyze images & screenshots" },
-    { icon: "🔒", text: "Fully local — no data sharing" },
-  ];
+
 
   const handleSubmit = async (): Promise<void> => {
     setError("");
@@ -71,12 +66,7 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
           <h1>Your documents,<br />now conversational.</h1>
           <p>Upload PDFs, paste URLs, or drop images — then ask anything. Powered by local AI, your data never leaves your machine.</p>
           <div className="feature-pills">
-            {features.map((f, i) => (
-              <div key={i} className="feature-pill">
-                <div className="pill-icon">{f.icon}</div>
-                {f.text}
-              </div>
-            ))}
+            
           </div>
         </div>
         <div style={{ color: "var(--text3)", fontSize: 12 }}>© 2026 NovaMind · Local AI</div>
