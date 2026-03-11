@@ -109,13 +109,10 @@ export async function addUrlDocument(
   
   return await res.json();
 }
-export async function createSession(title: string = "New chat"): Promise<any> {
-  const res = await fetch(`${API_BASE}/sessions`, {
+export async function createSession(title: string = "New chat"): Promise<{ session_id: string }> {
+  const res = await fetch(`${API_BASE}/sessions/create`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({
-      title: title
-    })
   });
 
   if (!res.ok) {
@@ -299,7 +296,7 @@ export async function exampleUploadFlow() {
   
   // 2. User clicks "Start Conversation"
   const session = await createSession("New chat");
-  const sessionId = session.id;  
+  const sessionId = session.session_id;  
   // Assign documents to the new session
   await assignDocumentsToSession(
     [doc1.document.id, doc2.document.id],

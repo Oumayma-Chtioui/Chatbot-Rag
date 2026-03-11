@@ -195,10 +195,11 @@ def search_documents(user_id: int, session_id: str, query: str, k: int = 5):
     """
     Search for relevant documents in the vector store
     """
-    db = get_vector_store(user_id, session_id)
+    clean_session_id = session_id.replace("session_", "").replace("session-", "")
+    db = get_vector_store(user_id, clean_session_id)
     
     if db is None:
-        logger.warning(f"⚠️  No vector store available for user {user_id}, session {session_id}")
+        logger.warning(f"⚠️  No vector store available for user {user_id}, session {clean_session_id}")
         return []
     
     try:

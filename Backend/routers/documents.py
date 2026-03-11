@@ -90,6 +90,7 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
             "status": "indexed" if process_result.get("success") else "failed",
             "chunks": process_result.get("chunks", 0),
             "created_at": datetime.utcnow().isoformat(),
+            "session_id": session_id
         }
         
         # Save to MongoDB
@@ -134,20 +135,35 @@ def assign_documents_to_session(
         if not doc:
             logger.warning(f"⚠️  Document {doc_id} not found or doesn't belong to user")
             continue
-        
-        # Update session_id
-        result = documents_collection.update_one(
+        old_session_id = doc.get("session_id")
+        if old_session_id and old_session_id != request.session_id:
+            clean_old = old_session_id.replace("session_", "").replace("session-", "")
+            clean_new = request.session_id.replace("session_", "").replace("session-", "")
+            
+            old_path = os.path.join(os.getcwd(), "vector_store", f"user_{current_user.id}", f"session_{clean_old}")
+            new_path = os.path.join(os.getcwd(), "vector_store", f"user_{current_user.id}", f"session_{clean_new}")
+            
+            if os.path.exists(old_path):
+                import shutil
+                if os.path.exists(new_path):
+                    # Merge: copy files into existing store directory
+                    for f in os.listdir(old_path):
+                        shutil.copy2(os.path.join(old_path, f), new_path)
+                    shutil.rmtree(old_path)
+                else:
+                    shutil.move(old_path, new_path)
+                logger.info(f"✅ Moved vector store from {old_path} to {new_path}")
+
+        # Update session_id in MongoDB
+        documents_collection.update_one(
             {"id": doc_id, "user_id": current_user.id},
             {"$set": {
                 "session_id": request.session_id,
                 "updated_at": datetime.utcnow().isoformat()
             }}
         )
-        
-        if result.modified_count > 0:
-            updated_count += 1
-            logger.info(f"✅ Assigned document {doc_id} to session {request.session_id}")
-    
+        updated_count += 1
+
     return {
         "message": f"Assigned {updated_count} documents to session",
         "session_id": request.session_id,

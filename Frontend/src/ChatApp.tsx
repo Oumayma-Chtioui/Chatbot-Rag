@@ -68,7 +68,7 @@ export default function App() {
   
   try {
     const sessionResponse = await api.createSession("New chat");
-    const sessionId = sessionResponse.id;
+    const sessionId = sessionResponse.session_id;
 
     // Extract document IDs (they must come from backend upload)
     const docIds = pendingDocs.map((doc) => doc.id);

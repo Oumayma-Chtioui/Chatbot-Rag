@@ -18,7 +18,7 @@ def get_sessions(current_user: UserModel = Depends(get_current_user), db: Sessio
     return [{"id": s.id, "title": s.title, "time": s.updated_at.strftime("%Y-%m-%d %H:%M")} for s in sessions]
 
 @router.post("/sessions/create")
-def create_session(current_user: UserModel = Depends(get_current_user)):
+def create_session_simple(current_user: UserModel = Depends(get_current_user)):
     session_id = f"session_{uuid.uuid4().hex[:12]}"
     return {"session_id": session_id}
 

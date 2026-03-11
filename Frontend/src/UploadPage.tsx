@@ -169,26 +169,26 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
               e.preventDefault();
               setDragging(false);
               const file = e.dataTransfer.files[0];
-              if (file && !uploading) handleFileDrop(file);
+              if (file && !uploading && sessionId) handleFileDrop(file);
             }}
           >
             <div className="drop-zone-icon">
               {uploadType === "image" ? "🖼️" : "📄"}
             </div>
             <div className="drop-zone-title">
-              {uploading ? 'Uploading...' : `Drop your ${uploadType === "image" ? "image" : "document"} here`}
+              {!sessionId ? '⟳ Initializing session...' : uploading ? 'Uploading...' : `Drop your ${uploadType === "image" ? "image" : "document"} here`}
             </div>
             <div className="drop-zone-sub">or click to browse · Max 50MB</div>
-            <label style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}>
+            <label style={{ cursor: (uploading || !sessionId) ? 'not-allowed' : 'pointer' }}>
               <input
                 type="file"
                 style={{ display: "none" }}
                 accept={uploadType === "image" ? "image/*" : ".pdf,.txt,.docx,.md"}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
                   const file = e.target.files?.[0];
-                  if (file && !uploading) handleFileDrop(file);
+                  if (file && !uploading && sessionId) handleFileDrop(file);
                 }}
-                disabled={uploading}
+                disabled={uploading || !sessionId} // ✅ disable until sessionId ready
               />
               <span className="btn-outline">📂 Browse files</span>
             </label>
