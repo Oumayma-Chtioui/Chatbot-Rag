@@ -1,12 +1,7 @@
-export interface Session {
-  id: number;
-  title: string;
-  time: string;
-  active?: boolean;
-}
+// types.tsx
 
 export interface Doc {
-  id: number;
+  id: string;
   name: string;
   type: "pdf" | "url" | "image";
   size: string;
@@ -21,31 +16,40 @@ export interface Message {
   time: string;
 }
 
+export interface Session {
+  id: string;
+  title: string;
+  time: string;
+  docs: Doc[];        // Each session has its own documents
+  messages: Message[]; // Each session has its own messages
+}
+
 export interface AuthPageProps {
-  onLogin:(name: string) => void;
+  onLogin: (name: string) => void;
 }
 
 export interface SidebarProps {
   page: string;
-  setPage: (p: string) => void;
+  setPage: (page: string) => void;
   sessions: Session[];
-  activeSession: number;
-  setActiveSession: (id: number) => void;
+  activeSession: string | null;
+  setActiveSession: (id: string) => void;
   onNewChat: () => void;
   userName: string;
   onLogout: () => void;
-
 }
 
 export interface ChatPageProps {
   docs: Doc[];
   messages: Message[];
-  setMessages: (msgs: Message[]) => void;
-  onToggleSidebar: () => void;  // ← make sure this exists
+  setMessages: (messages: Message[]) => void;
+  onToggleSidebar: () => void;
+  onAddDocs?: (docs: Doc[]) => void;
 }
 
 export interface UploadPageProps {
   docs: Doc[];
-  setDocs: (docs: Doc[] | ((prev: Doc[]) => Doc[])) => void;
-  onToggleSidebar: () => void;  // ← ADD THIS
+  setDocs: React.Dispatch<React.SetStateAction<Doc[]>>;
+  onToggleSidebar: () => void;
+  onStartChat: () => void;
 }

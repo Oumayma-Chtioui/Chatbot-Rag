@@ -1,38 +1,112 @@
-import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from "react";
-import { Session, Doc, Message, AuthPageProps, SidebarProps, ChatPageProps, UploadPageProps } from './types.tsx';  // Import interfaces
-function ChatPage({ docs, messages, setMessages, onToggleSidebar  }: ChatPageProps) {
+import { useState, useRef, useEffect, ChangeEvent, KeyboardEvent } from "react";
+import { Doc, Message } from './types.tsx';
+import * as api from "./api";
+
+interface ChatPageProps {
+  docs: Doc[];
+  sessionId: string;
+  messages: Message[];
+  setMessages: (messages: Message[]) => void;
+  onToggleSidebar: () => void;
+  onAddDocs?: (docs: Doc[]) => void;
+}
+
+function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onAddDocs }: ChatPageProps) {
   const [input, setInput] = useState<string>("");
   const [thinking, setThinking] = useState<boolean>(false);
+  const [showDocUpload, setShowDocUpload] = useState<boolean>(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
 
-  const handleSend = (): void => {
+  const handleSend = async (): Promise<void> => {
     if (!input.trim() || thinking) return;
+    
     const userMsg: Message = {
       id: Date.now(),
       role: "user",
       content: input,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
+    
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
     setInput("");
     setThinking(true);
 
-    setTimeout(() => {
-      setThinking(false);
+    try {
+      // Get token from localStorage (assuming you store it after login)
+      const token = localStorage.getItem('token');
+    
+      if (!token) {
+        console.error('No token found');
+        // Redirect to login or show error
+        return;
+      }
+      
+      // Your FastAPI backend URL
+      const API_URL = 'http://localhost:8000';
+    
+      console.log('Sending request to:', `${API_URL}/chat`);
+      console.log('Question:', userMsg.content);
+      
+      const response = await fetch(`${API_URL}/chat`, {  // 👈 USE BACKTICKS, not quotes
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          message: userMsg.content,
+          session_id: sessionId,
+        })
+      });
+      
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Format sources properly
+      const sources = data.sources.map((source: any) => {
+        // Try to get the filename from source field
+        if (source.source) {
+          // Extract just the filename from the path if needed
+          const filename = source.source.split('\\').pop()?.split('/').pop() || source.source;
+          return filename;
+        }
+        return source.name || 'Document';
+      });
+      
       const reply: Message = {
         id: Date.now() + 1,
         role: "assistant",
-        content: "Based on the document, I found relevant context. This is a simulated response — connect your LangChain RAG backend to get real answers from your loaded documents.",
-        sources: docs.length > 0 ? [`${docs[0].name} · p.3`] : [],
+        content: data.answer,
+        sources: sources,
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
+      
       setMessages([...newMsgs, reply]);
-    }, 1800);
+    } catch (error) {
+      console.error('Error getting response:', error);
+      
+      const errorReply: Message = {
+        id: Date.now() + 1,
+        role: "assistant",
+        content: "Sorry, I encountered an error processing your request. Please make sure the backend server is running.",
+        sources: [],
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      
+      setMessages([...newMsgs, errorReply]);
+    } finally {
+      setThinking(false);
+    }
   };
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -42,22 +116,109 @@ function ChatPage({ docs, messages, setMessages, onToggleSidebar  }: ChatPagePro
     }
   };
 
+  const handleFileAdd = async (file: File): Promise<void> => {
+    if (!onAddDocs) return;
+
+    try {
+      // 🔥 Upload to backend
+      const result = await api.uploadDocument(file);
+
+      const newDoc: Doc = {
+        id: result.document.id,   // Now result exists
+        name: result.document.name || file.name,
+        type: "pdf",
+        size: `${(file.size / 1024).toFixed(0)} KB`,
+        status: "ready",
+      };
+
+      onAddDocs([newDoc]);
+      setShowDocUpload(false);
+
+    } catch (err: any) {
+      console.error("Upload failed:", err.message);
+    }
+    };
+
   return (
     <>
       <div className="topbar">
-        <button className="hamburger" onClick={onToggleSidebar}>☰</button>  {/* ADD THIS */}
-        <div className="topbar-title">MachineLearning-Lecture01</div>
+        <button className="hamburger" onClick={onToggleSidebar}>☰</button>
+        <div className="topbar-title">
+          {messages.length > 0 && messages.find(m => m.role === "user")
+            ? messages.find(m => m.role === "user")!.content.slice(0, 40) + "..."
+            : "New Conversation"}
+        </div>
         <div className="topbar-actions">
-          <span style={{ fontSize: 12, color: "var(--text3)" }}>{docs.length} doc{docs.length !== 1 ? "s" : ""} loaded</span>
+          <span style={{ fontSize: 12, color: "var(--text3)" }}>
+            {docs.length} doc{docs.length !== 1 ? "s" : ""}
+          </span>
+          <button 
+            className="icon-btn" 
+            title="Add documents"
+            onClick={() => setShowDocUpload(!showDocUpload)}
+          >
+            📎
+          </button>
           <button className="icon-btn" title="Search">🔍</button>
           <button className="icon-btn" title="Share">↗</button>
         </div>
       </div>
 
+      {/* Quick doc upload in chat */}
+      {showDocUpload && (
+        <div style={{
+          background: 'var(--bg2)',
+          borderBottom: '1px solid var(--border)',
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--text3)' }}>Add more documents:</span>
+          <label style={{ cursor: 'pointer' }}>
+            <input
+              type="file"
+              style={{ display: "none" }}
+              accept=".pdf,.txt,.docx,.md"
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                const file = e.target.files?.[0];
+                if (file) handleFileAdd(file);
+              }}
+            />
+            <span className="btn-outline" style={{ fontSize: 12, padding: '6px 12px' }}>
+              📂 Browse
+            </span>
+          </label>
+          <button 
+            onClick={() => setShowDocUpload(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text3)',
+              cursor: 'pointer',
+              fontSize: 18
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div className="chat-area">
         {messages.length === 0 && (
-          <div style={{ textAlign: "center", color: "var(--text3)", marginTop: 60, fontSize: 14 }}>
-            No messages yet — start the conversation below.
+          <div style={{ 
+            textAlign: "center", 
+            color: "var(--text3)", 
+            marginTop: 60, 
+            fontSize: 14 
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 16 }}>💬</div>
+            <div style={{ marginBottom: 8 }}>
+              Ready to chat with your {docs.length} document{docs.length !== 1 ? "s" : ""}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Ask anything about the uploaded content
+            </div>
           </div>
         )}
 
@@ -67,7 +228,9 @@ function ChatPage({ docs, messages, setMessages, onToggleSidebar  }: ChatPagePro
               {msg.role === "assistant" ? "✦" : "A"}
             </div>
             <div className="msg-content">
-              <div className="msg-bubble" style={{ whiteSpace: "pre-line" }}>{msg.content}</div>
+              <div className="msg-bubble" style={{ whiteSpace: "pre-line" }}>
+                {msg.content}
+              </div>
               {msg.sources && msg.sources.length > 0 && (
                 <div className="source-chips">
                   {msg.sources.map((s: string, i: number) => (
@@ -99,9 +262,40 @@ function ChatPage({ docs, messages, setMessages, onToggleSidebar  }: ChatPagePro
       <div className="input-area">
         <div className="input-wrapper">
           <div className="input-toolbar">
-            <button className="toolbar-btn" title="Attach file">📎</button>
-            <button className="toolbar-btn" title="Select document">📄</button>
-            <button className="toolbar-btn" title="Web search">🌐</button>
+            {/* Document badges */}
+            {docs.length > 0 && messages.length === 0 && (
+              <div style={{ 
+                display: 'flex', 
+                gap: '6px', 
+                flexWrap: 'wrap',
+                marginBottom: '8px' 
+              }}>
+                {docs.slice(0, 3).map((doc, i) => (
+                  <span 
+                    key={i}
+                    style={{
+                      fontSize: 11,
+                      padding: '4px 8px',
+                      background: 'var(--bg2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      color: 'var(--text3)'
+                    }}
+                  >
+                    📄 {doc.name.slice(0, 20)}{doc.name.length > 20 ? '...' : ''}
+                  </span>
+                ))}
+                {docs.length > 3 && (
+                  <span style={{
+                    fontSize: 11,
+                    padding: '4px 8px',
+                    color: 'var(--text3)'
+                  }}>
+                    +{docs.length - 3} more
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <textarea
             className="chat-input"
@@ -113,7 +307,13 @@ function ChatPage({ docs, messages, setMessages, onToggleSidebar  }: ChatPagePro
           />
           <div className="input-footer">
             <span className="input-hint">↵ Send · ⇧↵ Newline</span>
-            <button className="send-btn" onClick={handleSend} disabled={!input.trim() || thinking}>➤</button>
+            <button 
+              className="send-btn" 
+              onClick={handleSend} 
+              disabled={!input.trim() || thinking}
+            >
+              ➤
+            </button>
           </div>
         </div>
       </div>

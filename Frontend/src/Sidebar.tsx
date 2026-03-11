@@ -9,7 +9,7 @@ function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onN
           <div className="logo-icon" style={{ width: 28, height: 28, fontSize: 12 }}>✦</div>
           NovaMind
         </div>
-        <button className="new-chat-btn" title="New chat" onClick={onNewChat}>✏</button>
+        <button className="new-chat-btn" title="New chat" onClick={onNewChat}>+</button>
       </div>
 
       <div className="sidebar-nav">

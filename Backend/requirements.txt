@@ -12,5 +12,9 @@ langchain
 langchain-community
 langchain-ollama
 langchain-text-splitters
-chromadb
+langchain-huggingface
+
 pypdf
+faiss-cpu
+
+sentence-transformers

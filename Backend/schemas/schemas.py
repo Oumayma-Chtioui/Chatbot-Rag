@@ -13,6 +13,10 @@ class LoginRequest(BaseModel):
 class SessionCreate(BaseModel):
     title: Optional[str] = "New chat"
 
+class AssignSessionRequest(BaseModel):
+    doc_ids: List[str]
+    session_id: str
+
 class MessageCreate(BaseModel):
     role: str
     content: str

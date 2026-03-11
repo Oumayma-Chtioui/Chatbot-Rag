@@ -2,6 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from pymongo import MongoClient
 from config import POSTGRES_URL, MONGO_URL, MONGO_DB
+import os 
 
 # ── PostgreSQL ─────────────────────────────────────────────────────────────────
 engine = create_engine(POSTGRES_URL)
@@ -16,6 +17,45 @@ def get_db():
         db.close()
 
 # ── MongoDB ────────────────────────────────────────────────────────────────────
-mongo_client = MongoClient(MONGO_URL, authSource="admin")
-mongo_db = mongo_client[MONGO_DB]
-documents_collection = mongo_db["documents"]
+MONGODB_URL = "mongodb://host.docker.internal:27017/your_database"
+MONGODB_DB = os.getenv("MONGODB_DB", "chatbot_db")
+
+# Connect to MongoDB
+USE_MONGODB = True
+mongo_client = None
+mongodb = None
+documents_collection = None
+try:
+    mongo_client = MongoClient(
+        MONGODB_URL,
+        serverSelectionTimeoutMS=5000,  # 5 seconds timeout
+        connectTimeoutMS=5000)
+    # Test connection
+    mongo_client.admin.command('ping')
+    print("✅ MongoDB connected successfully")
+    
+    # Get database and collection
+    mongodb = mongo_client[MONGODB_DB]
+    documents_collection = mongodb.documents
+    
+    # Create indexes for better performance
+    documents_collection.create_index([("user_id", 1)])
+    documents_collection.create_index([("session_id", 1)])
+    documents_collection.create_index([("id", 1)], unique=True)
+    print(f"✅ Using database: {MONGODB_DB}, collection: documents")
+    
+except Exception as e:
+    USE_MONGODB = False
+    print(f"❌ MongoDB connection failed: {e}")
+    
+    # Create dummy collection for testing
+    class DummyCollection:
+        def find(self, *args, **kwargs):
+            return []
+        def insert_one(self, *args, **kwargs):
+            print("⚠️ MongoDB not available - using dummy collection")
+            return type('obj', (object,), {'inserted_id': 'dummy'})()
+        def count_documents(self, *args, **kwargs):
+            return 0
+    
+    documents_collection = DummyCollection()

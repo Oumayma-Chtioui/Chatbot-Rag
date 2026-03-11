@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import Base, engine
 from models.user import UserModel, ChatSessionModel, MessageModel  # register models
-from routers import auth, sessions, documents
+from routers import auth, sessions, documents, chat
 
 # Create all PostgreSQL tables
 Base.metadata.create_all(bind=engine)
@@ -21,6 +21,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(documents.router)
+app.include_router(chat.router)
+
 
 @app.get("/")
 def root():
