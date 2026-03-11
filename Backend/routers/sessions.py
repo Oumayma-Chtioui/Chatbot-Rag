@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -14,6 +16,11 @@ def get_sessions(current_user: UserModel = Depends(get_current_user), db: Sessio
         ChatSessionModel.user_id == current_user.id
     ).order_by(ChatSessionModel.updated_at.desc()).all()
     return [{"id": s.id, "title": s.title, "time": s.updated_at.strftime("%Y-%m-%d %H:%M")} for s in sessions]
+
+@router.post("/sessions/create")
+def create_session(current_user: UserModel = Depends(get_current_user)):
+    session_id = f"session_{uuid.uuid4().hex[:12]}"
+    return {"session_id": session_id}
 
 @router.post("/sessions")
 def create_session(req: SessionCreate, current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):

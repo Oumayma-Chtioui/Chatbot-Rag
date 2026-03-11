@@ -16,17 +16,25 @@ logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).parent.parent.absolute()
 def get_vector_path(user_id: str, session_id: str):
+    # Clean session ID to match how rag_services stores it
+    clean_session_id = session_id.replace("session_", "").replace("session-", "")
     return os.path.join(
         os.getcwd(),
         "vector_store",
         f"user_{user_id}",
-        f"session_{session_id}"
+        f"session_{clean_session_id}"
     )
-
 
 def generate_answer(question: str, user_id: str, session_id: str):
     logger.info(f"🔍 Generating answer for: {question[:50]}...")
-    VECTOR_PATH = get_vector_path(user_id=user_id, session_id=session_id)  # Default session_id for debugging
+
+    clean_session_id = session_id.replace("session_", "").replace("session-", "")
+
+    VECTOR_PATH = get_vector_path(user_id, clean_session_id)
+
+    logger.warning(f"🔎 RAW session_id received: '{clean_session_id}'")
+    logger.warning(f"🔎 VECTOR_PATH looking for: '{VECTOR_PATH}'")
+    logger.warning(f"🔎 Path exists: {os.path.exists(VECTOR_PATH)}")
 
     # Check if vector store exists
     if not os.path.exists(VECTOR_PATH):
@@ -35,10 +43,7 @@ def generate_answer(question: str, user_id: str, session_id: str):
 
     try:
         # Check if directory is empty
-        VECTOR_PATH = get_vector_path(user_id, session_id)
-
-        if not os.path.exists(VECTOR_PATH):
-            raise Exception("No documents indexed for this session")
+        
         logger.info(f"✅ Vector store found at: {VECTOR_PATH}")
         logger.info(f"📁 Files: {os.listdir(VECTOR_PATH)}")
         

@@ -109,14 +109,18 @@ export async function addUrlDocument(
   
   return await res.json();
 }
-export async function createSession(): Promise<any> {
+export async function createSession(title: string = "New chat"): Promise<any> {
   const res = await fetch(`${API_BASE}/sessions`, {
     method: "POST",
     headers: getHeaders(),
+    body: JSON.stringify({
+      title: title
+    })
   });
 
   if (!res.ok) {
-    throw new Error("Failed to create session");
+    const error = await res.json();
+    throw new Error(error.detail || "Failed to create session");
   }
 
   return await res.json();
@@ -294,8 +298,8 @@ export async function exampleUploadFlow() {
   console.log("Uploaded:", doc1.document.id, doc2.document.id);
   
   // 2. User clicks "Start Conversation"
-  const sessionId = `session-${Date.now()}`;
-  
+  const session = await createSession("New chat");
+  const sessionId = session.id;  
   // Assign documents to the new session
   await assignDocumentsToSession(
     [doc1.document.id, doc2.document.id],

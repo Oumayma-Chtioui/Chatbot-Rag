@@ -30,13 +30,22 @@ export default function App() {
   
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
 
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+
+  
   const toggleSidebar = (): void => setSidebarOpen((o) => !o);
   const closeSidebar = (): void => setSidebarOpen(false);
+
+  const initNewSession = async () => {
+    const { session_id } = await api.createSession();
+    setPendingSessionId(session_id);
+  };
 
   const handleLogin = (name: string): void => {
     setUserName(name);
     setAuthed(true);
     setView('upload'); // Start at upload page after login
+    initNewSession();
   };
 
   const handleLogout = (): void => {
@@ -58,9 +67,8 @@ export default function App() {
   }
   
   try {
-
-    // 🔥 Create backend session id
-    const sessionId = `session-${Date.now()}`;
+    const sessionResponse = await api.createSession("New chat");
+    const sessionId = sessionResponse.id;
 
     // Extract document IDs (they must come from backend upload)
     const docIds = pendingDocs.map((doc) => doc.id);
@@ -81,6 +89,7 @@ export default function App() {
     setSessions((prev) => [newSession, ...prev]);
     setActiveSessionId(sessionId);
     setPendingDocs([]);
+    setPendingSessionId(null);
     setView("chat");
     closeSidebar();
 
@@ -95,6 +104,7 @@ export default function App() {
     setActiveSessionId(null); // No active session
     setView('upload'); // Go to upload view
     closeSidebar();
+    initNewSession();
   };
 
   // Switch to existing chat session
@@ -174,6 +184,7 @@ export default function App() {
                 setDocs={setPendingDocs}
                 onToggleSidebar={toggleSidebar}
                 onStartChat={handleStartChat}
+                sessionId={pendingSessionId ?? ""}
               />
             ) : activeSession ? (
               <ChatPage

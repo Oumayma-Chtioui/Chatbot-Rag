@@ -10,9 +10,10 @@ interface UploadPageProps {
   setDocs: React.Dispatch<React.SetStateAction<Doc[]>>;
   onToggleSidebar: () => void;
   onStartChat: () => void;
+  sessionId: string; 
 }
 
-function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat }: UploadPageProps) {
+function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: UploadPageProps) {
   const [uploadType, setUploadType] = useState<Doc["type"]>("pdf");
   const [url, setUrl] = useState<string>("");
   const [dragging, setDragging] = useState<boolean>(false);
@@ -73,7 +74,8 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat }: UploadPageP
 
   const handleFileDrop = async (file: File) => {
   try {
-    const result = await uploadDocument(file);
+    const result = await uploadDocument(file, sessionId);
+    
     
     const newDoc: Doc = {
       id: result.document.id,
