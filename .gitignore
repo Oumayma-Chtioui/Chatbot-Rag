@@ -3,3 +3,5 @@ Backend/vector_store
 Backend/uploads
 .env
 .gitignore
+*.pdf
+*.pdf
