@@ -9,9 +9,10 @@ interface ChatPageProps {
   setMessages: (messages: Message[]) => void;
   onToggleSidebar: () => void;
   onAddDocs?: (docs: Doc[]) => void;
+  userName: string;
 }
 
-function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onAddDocs }: ChatPageProps) {
+function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onAddDocs, userName }: ChatPageProps) {
   const [input, setInput] = useState<string>("");
   const [thinking, setThinking] = useState<boolean>(false);
   const [showDocUpload, setShowDocUpload] = useState<boolean>(false);
@@ -121,7 +122,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
 
     try {
       // 🔥 Upload to backend
-      const result = await api.uploadDocument(file);
+      const result = await api.uploadDocument(file, sessionId);
 
       const newDoc: Doc = {
         id: result.document.id,   // Now result exists
@@ -159,8 +160,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
           >
             📎
           </button>
-          <button className="icon-btn" title="Search">🔍</button>
-          <button className="icon-btn" title="Share">↗</button>
+          
         </div>
       </div>
 
@@ -169,38 +169,78 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
         <div style={{
           background: 'var(--bg2)',
           borderBottom: '1px solid var(--border)',
-          padding: '12px 20px',
+          padding: '16px 20px',
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column',
           gap: '12px'
         }}>
-          <span style={{ fontSize: 13, color: 'var(--text3)' }}>Add more documents:</span>
-          <label style={{ cursor: 'pointer' }}>
-            <input
-              type="file"
-              style={{ display: "none" }}
-              accept=".pdf,.txt,.docx,.md"
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                const file = e.target.files?.[0];
-                if (file) handleFileAdd(file);
+          {/* Loaded documents list */}
+          {docs.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+                Loaded documents ({docs.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {docs.map((doc, i) => (
+                  <div key={i} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 13,
+                    padding: '6px 10px',
+                    background: 'var(--bg1)',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)'
+                  }}>
+                    <span>📄</span>
+                    <span style={{ color: 'var(--text1)', flex: 1 }}>{doc.name}</span>
+                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>{doc.size}</span>
+                    <span style={{
+                      fontSize: 11,
+                      padding: '2px 6px',
+                      background: 'var(--accent)22',
+                      color: 'var(--accent)',
+                      borderRadius: 4
+                    }}>
+                      ✓ Ready
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Add more documents */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: 13, color: 'var(--text3)' }}>Add more documents:</span>
+            <label style={{ cursor: 'pointer' }}>
+              <input
+                type="file"
+                style={{ display: "none" }}
+                accept=".pdf,.txt,.docx,.md"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileAdd(file);
+                }}
+              />
+              <span className="btn-outline" style={{ fontSize: 12, padding: '6px 12px' }}>
+                📂 Browse
+              </span>
+            </label>
+            <button
+              onClick={() => setShowDocUpload(false)}
+              style={{
+                marginLeft: 'auto',
+                background: 'none',
+                border: 'none',
+                color: 'var(--text3)',
+                cursor: 'pointer',
+                fontSize: 18
               }}
-            />
-            <span className="btn-outline" style={{ fontSize: 12, padding: '6px 12px' }}>
-              📂 Browse
-            </span>
-          </label>
-          <button 
-            onClick={() => setShowDocUpload(false)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              fontSize: 18
-            }}
-          >
-            ✕
-          </button>
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -225,7 +265,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
         {messages.map((msg: Message) => (
           <div key={msg.id} className={`message ${msg.role} animate-in`}>
             <div className={`msg-avatar ${msg.role === "assistant" ? "ai" : "user-av"}`}>
-              {msg.role === "assistant" ? "✦" : "A"}
+              {msg.role === "assistant" ? "✦" : userName.charAt(0).toUpperCase()}
             </div>
             <div className="msg-content">
               <div className="msg-bubble" style={{ whiteSpace: "pre-line" }}>

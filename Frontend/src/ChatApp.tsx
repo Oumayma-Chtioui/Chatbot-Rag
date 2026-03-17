@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect  } from "react";
 
 import './style.css'
 import AuthPage from './AuthPage.tsx'
@@ -32,7 +32,12 @@ export default function App() {
 
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
 
-  
+  useEffect(() => {
+    if (authed) {
+      loadSessions();
+      initNewSession();
+    }
+  }, []);
   const toggleSidebar = (): void => setSidebarOpen((o) => !o);
   const closeSidebar = (): void => setSidebarOpen(false);
 
@@ -41,12 +46,29 @@ export default function App() {
     setPendingSessionId(session_id);
   };
 
-  const handleLogin = (name: string): void => {
+  const handleLogin = async (name: string): Promise<void> => {
     setUserName(name);
     setAuthed(true);
     setView('upload'); // Start at upload page after login
     initNewSession();
+    await loadSessions(); // ✅ load past sessions
   };
+
+  const loadSessions = async (): Promise<void> => {
+  try {
+    const data = await api.getSessions();
+    const restored: Session[] = data.map((s: any) => ({
+      id: s.id,
+      title: s.title,
+      time: s.time,
+      docs: [],
+      messages: []
+    }));
+    setSessions(restored);
+  } catch (err) {
+    console.error("Failed to load sessions:", err);
+  }
+};
 
   const handleLogout = (): void => {
     localStorage.removeItem("token");
@@ -108,10 +130,37 @@ export default function App() {
   };
 
   // Switch to existing chat session
-  const handleSelectSession = (id: string): void => {
+  const handleSelectSession = async (id: string): Promise<void> => {
     setActiveSessionId(id);
     setView('chat');
     closeSidebar();
+    try {
+    // Load messages
+    const msgData = await api.getSessionMessages(id);
+    const messages: Message[] = msgData.map((m: any) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      sources: m.sources || []
+    }));
+
+    // Load documents
+    const docData = await api.getSessionDocuments(id);
+    const docs: Doc[] = docData.documents.map((d: any) => ({
+      id: d.id,
+      name: d.name,
+      type: d.type || "pdf",
+      size: d.size || "",
+      status: "ready"
+    }));
+
+    // Update session with restored data
+    setSessions(prev => prev.map(s =>
+      s.id === id ? { ...s, messages, docs } : s
+    ));
+  } catch (err) {
+    console.error("Failed to restore session:", err);
+  }
   };
 
   // Update messages for active session
@@ -195,6 +244,7 @@ export default function App() {
                 setMessages={handleUpdateMessages}
                 onToggleSidebar={toggleSidebar}
                 onAddDocs={handleAddDocsToSession}
+                userName={userName}
               />
             ) : (
               <div style={{ 

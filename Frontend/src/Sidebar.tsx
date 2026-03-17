@@ -41,7 +41,7 @@ function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onN
           <div className="avatar">{userName.charAt(0).toUpperCase()}</div>
           <div className="user-info">
             <div className="user-name">{userName}</div>
-            <div className="user-plan">Local · llama3.2:1b</div>
+            
           </div>
           <span style={{ color: "var(--text3)", fontSize: 14 }}>⚙</span>
         </div>

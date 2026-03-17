@@ -25,6 +25,7 @@ USE_MONGODB = True
 mongo_client = None
 mongodb = None
 documents_collection = None
+messages_collection = None
 try:
     mongo_client = MongoClient(
         MONGODB_URL,
@@ -37,11 +38,14 @@ try:
     # Get database and collection
     mongodb = mongo_client[MONGODB_DB]
     documents_collection = mongodb.documents
+    messages_collection = mongodb.messages
     
     # Create indexes for better performance
     documents_collection.create_index([("user_id", 1)])
     documents_collection.create_index([("session_id", 1)])
     documents_collection.create_index([("id", 1)], unique=True)
+    messages_collection.create_index([("session_id", 1)])  # ✅ add this
+    messages_collection.create_index([("timestamp", 1)])   # ✅ add this
     print(f"✅ Using database: {MONGODB_DB}, collection: documents")
     
 except Exception as e:
@@ -59,3 +63,4 @@ except Exception as e:
             return 0
     
     documents_collection = DummyCollection()
+    messages_collection = DummyCollection()

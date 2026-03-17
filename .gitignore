@@ -1,2 +1,5 @@
 Backend/test.py
-Backend/vector_store/user_3/session_64530071-5df7-4cc5-87f8-6df08d15ddb3/index.pkl
+Backend/vector_store
+Backend/uploads
+.env
+.gitignore

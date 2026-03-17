@@ -267,6 +267,45 @@ def export_store_to_json(db, user_id: str, session_id: str, output_file: str = N
     except Exception as e:
         print(f"❌ Export error: {e}")
 
+
+def delete_vector_store(user_id: str, session_id: str):
+    """Delete a vector store permanently"""
+    import shutil
+    
+    vector_path = os.path.join(VECTOR_BASE_PATH, f"user_{user_id}", f"session_{session_id}")
+    
+    if not os.path.exists(vector_path):
+        print(f"❌ Vector store not found at: {vector_path}")
+        return False
+    
+    print(f"\n⚠️  WARNING: You are about to DELETE:")
+    print(f"   User ID: {user_id}")
+    print(f"   Session ID: {session_id}")
+    print(f"   Path: {vector_path}")
+    print(f"\n❌ This action CANNOT be undone!")
+    
+    confirm = input("\nType 'DELETE' (all caps) to confirm: ").strip()
+    
+    if confirm != "DELETE":
+        print("❌ Deletion cancelled")
+        return False
+    
+    try:
+        shutil.rmtree(vector_path)
+        print(f"✅ Successfully deleted vector store")
+        
+        # Check if user directory is now empty
+        user_path = os.path.join(VECTOR_BASE_PATH, f"user_{user_id}")
+        if os.path.exists(user_path) and not os.listdir(user_path):
+            print(f"🗑️  Removing empty user directory: {user_path}")
+            os.rmdir(user_path)
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to delete: {e}")
+        return False
+
 def main():
     """Main CLI interface"""
     print("\n" + "="*60)
@@ -289,9 +328,10 @@ def main():
         print("3. Search in a store")
         print("4. Interactive query mode")
         print("5. Export store to JSON")
-        print("6. Exit")
+        print("6. Delete a vector store")
+        print("7. Exit")
         
-        choice = input("\nSelect option (1-6): ").strip()
+        choice = input("\nSelect option (1-7): ").strip()
         
         if choice == "1":
             stores = list_all_stores()
@@ -380,6 +420,29 @@ def main():
                 export_store_to_json(db, store['user_id'], store['session_id'], output or None)
         
         elif choice == "6":
+            # Delete
+            if len(stores) == 1:
+                store = stores[0]
+            else:
+                print("\nSelect a store to DELETE:")
+                for i, s in enumerate(stores, 1):
+                    print(f"{i}. User {s['user_id']} - Session {s['session_id'][:30]}...")
+                
+                idx = input("\nEnter number: ").strip()
+                try:
+                    store = stores[int(idx) - 1]
+                except:
+                    print("❌ Invalid selection")
+                    continue
+            
+            if delete_vector_store(store['user_id'], store['session_id']):
+                # Refresh store list after deletion
+                stores = discover_vector_stores()
+                if not stores:
+                    print("\n✅ All stores deleted. Exiting...")
+                    break
+        
+        elif choice == "7":
             print("👋 Goodbye!")
             break
         

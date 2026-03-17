@@ -42,15 +42,17 @@ services:
     container_name: chatbot_backend
     restart: always
     environment:
-      POSTGRES_URL: "postgresql://postgres:root@postgres:5432/chatbot_rag"
-      MONGO_URL: "mongodb://mongodb:27017"
-      MONGO_DB: "chatbot_rag"
-      SECRET_KEY: "secret_key"
+      POSTGRES_URL: ${POSTGRES_URL}
+      MONGO_URL: ${MONGO_URL}
+      MONGO_DB: ${MONGO_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     ports:
       - "8000:8000"
     volumes:
       - ./Backend:/app
       - ./uploads:/app/uploads
+      - backend_packages:/usr/local/lib/python3.11/site-packages
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,3 +76,4 @@ services:
 volumes:
   postgres_data:
   mongo_data:
+  backend_packages:

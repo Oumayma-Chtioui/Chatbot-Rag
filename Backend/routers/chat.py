@@ -6,6 +6,12 @@ import logging
 from auth.helpers import get_current_user
 from models.user import UserModel
 from services.chatservice import generate_answer
+from sqlalchemy.orm import Session as DBSession
+
+
+from models.user import UserModel, ChatSessionModel, MessageModel
+from database import get_db
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +34,8 @@ class ChatResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user),
+    db: DBSession = Depends(get_db)
 ):
     """
     Chat endpoint with RAG - uses per-session document isolation
@@ -47,6 +54,47 @@ async def chat(
         
         logger.info(f"✅ Generated answer: {result['answer'][:100]}...")
         
+        session = db.query(ChatSessionModel).filter(
+            ChatSessionModel.id == request.session_id
+        ).first()
+
+        if not session:
+            session = ChatSessionModel(
+                id=request.session_id,
+                user_id=current_user.id,
+                title=request.message[:40]
+            )
+            db.add(session)
+            db.flush()
+
+        # Save user message
+        user_msg = MessageModel(
+            session_id=request.session_id,
+            role="user",
+            content=request.message,
+            sources=""
+        )
+        db.add(user_msg)
+
+        # Save assistant message
+        sources_str = ",".join([s.get("source", "") for s in result.get("sources", [])])
+        assistant_msg = MessageModel(
+            session_id=request.session_id,
+            role="assistant",
+            content=result["answer"],
+            sources=sources_str
+        )
+        db.add(assistant_msg)
+
+        # Update session title and timestamp
+        if session.title == "New chat" or session.title == "New conversation":
+            session.title = request.message[:40]
+        from datetime import datetime
+        session.updated_at = datetime.utcnow()
+
+        db.commit()
+        logger.info("✅ Messages saved to PostgreSQL")
+
         return ChatResponse(
             answer=result["answer"],
             sources=result.get("sources", []),
@@ -79,3 +127,17 @@ async def chat_status(current_user: UserModel = Depends(get_current_user)):
         "status": status,
         "ready": all(status.values())
     }
+
+@router.get("/chat/{session_id}/history")
+async def get_history(
+    session_id: str,
+    current_user: UserModel = Depends(get_current_user)
+):
+    from database import messages_collection
+    messages = list(
+        messages_collection.find(
+            {"session_id": session_id, "user_id": current_user.id},
+            {"_id": 0, "session_id": 0, "user_id": 0, "timestamp": 0}
+        ).sort("timestamp", 1)
+    )
+    return {"messages": messages}

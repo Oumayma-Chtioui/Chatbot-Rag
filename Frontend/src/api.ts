@@ -170,9 +170,9 @@ export async function getDocuments(sessionId?: string): Promise<any> {
  * Get documents for specific session
  */
 export async function getSessionDocuments(sessionId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}/documents`, {
-    headers: getHeaders(),
-  });
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/documents`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch session documents");
+  return await res.json();
   
   if (!res.ok) {
     throw new Error("Failed to fetch session documents");
@@ -360,4 +360,16 @@ export async function exampleNewChat() {
   // Clear pending documents state in frontend
   // User uploads new documents
   // Repeat upload flow
+}
+
+export async function getSessions(): Promise<any> {
+  const res = await fetch(`${API_BASE}/sessions`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch sessions");
+  return await res.json();
+}
+
+export async function getSessionMessages(sessionId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch messages");
+  return await res.json();
 }

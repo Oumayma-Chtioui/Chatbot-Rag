@@ -7,6 +7,8 @@ from database import get_db
 from models.user import UserModel, ChatSessionModel, MessageModel
 from schemas.schemas import SessionCreate, MessageCreate
 from auth.helpers import get_current_user
+from database import get_db, documents_collection
+
 
 router = APIRouter(tags=["Sessions"])
 
@@ -82,3 +84,15 @@ def add_message(session_id: str, req: MessageCreate, current_user: UserModel = D
     db.commit()
     db.refresh(msg)
     return {"id": msg.id, "role": msg.role, "content": msg.content, "sources": req.sources, "time": msg.created_at.strftime("%H:%M")}
+
+@router.get("/sessions/{session_id}/documents")
+def get_session_documents_pg(
+    session_id: str,
+    current_user: UserModel = Depends(get_current_user)
+):
+    """Get documents for a session from MongoDB"""
+    docs = list(documents_collection.find(
+        {"user_id": current_user.id, "session_id": session_id},
+        {"_id": 0}
+    ))
+    return {"session_id": session_id, "documents": docs}
