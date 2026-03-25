@@ -25,3 +25,5 @@ langchain-google-genai
 
 openai
 langchain-openai
+
+groq

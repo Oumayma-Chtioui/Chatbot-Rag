@@ -136,6 +136,35 @@ def save_message(session_id: str, user_id, role: str, content: str):
     })
 
 # ─────────────────────────────────────────────────────────────
+# Timeout Handler
+# ─────────────────────────────────────────────────────────────
+def handle_timeout(system_prompt: str, question: str):
+    models = ["gemini-2.5-flash", "gemini-2.5-flash1", "stepfun/step-3.5-flash:free", "stepfun/step-3.5-flash:free1" , "openrouter/free", "openrouter/free1"]
+    for model in models:
+        try:
+            logger.info(f"⏱️ Attempting to generate answer with {model} after timeout...")
+            if model == "gemini-2.5-flash":
+                answer = gemini_generate_answer(system_prompt, question)
+            elif model == "gemini-2.5-flash1":
+                answer = gemini_generate_answer_2(system_prompt, question)
+            elif model == "stepfun/step-3.5-flash:free":
+                answer = openrouter_stepfun_generate_answer(system_prompt, question)
+            elif model == "stepfun/step-3.5-flash:free1":
+                answer = openrouter_stepfun_generate_answer_2(system_prompt, question)
+            elif model == "openrouter/free":
+                answer = openrouter_generate_answer(system_prompt, question)
+            elif model == "openrouter/free1":
+                answer = openrouter_generate_answer_2(system_prompt, question)
+
+            if answer:
+                logger.info(f"✅ Successfully generated answer with {model} after timeout")
+                return answer
+        except Exception as e:
+            logger.error(f"❌ Failed to generate answer with {model} after timeout: {e}")
+            continue
+    logger.error("❌ All fallback models failed after timeout")
+    return "Sorry, I'm having trouble generating a response right now. Please try again later."
+# ─────────────────────────────────────────────────────────────
 #LLM Loading
 # ─────────────────────────────────────────────────────────────
 def load_gemini():
@@ -144,6 +173,14 @@ def load_gemini():
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     llm = genai.GenerativeModel('models/gemini-2.5-flash')
     logger.info("✅ gemini-2.5-flash initialized")
+    return llm
+
+def load_gemini_2():
+    import google.generativeai  as genai
+    logger.info("🔄 Initializing gemini-2-flash LLM...")
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY2"))
+    llm = genai.GenerativeModel('models/gemini-2-flash')
+    logger.info("✅ gemini-2-flash initialized")
     return llm
 
 def load_tinyllama():
@@ -171,6 +208,17 @@ def load_openrouter_stepfun():
     logger.info("✅ stepfun/step-3.5-flash initialized")
     return llm
 
+def load_openrouter_stepfun2():
+    from langchain_openai import ChatOpenAI
+    logger.info("🔄 Initializing stepfun/step-3.5-flash LLM with second API key...")
+    llm =ChatOpenAI(
+        model="stepfun/step-3.5-flash:free",  
+        openai_api_key=os.getenv("OPENROUTER_API_KEY2"),
+        openai_api_base="https://openrouter.ai/api/v1"
+    )
+    logger.info("✅ stepfun/step-3.5-flash with second API key initialized")
+    return llm
+
 def load_openrouter_free():
     from langchain_openai import ChatOpenAI
     logger.info("🔄 Initializing openrouter/free LLM...")
@@ -180,6 +228,17 @@ def load_openrouter_free():
         openai_api_base="https://openrouter.ai/api/v1"
     )
     logger.info("✅ openrouter/free initialized")
+    return llm
+
+def load_openrouter_free_2():
+    from langchain_openai import ChatOpenAI
+    logger.info("🔄 Initializing openrouter/free LLM with second API key...")
+    llm = ChatOpenAI(
+        model="openrouter/free",  
+        openai_api_key=os.getenv("OPENROUTER_API_KEY2"),
+        openai_api_base="https://openrouter.ai/api/v1"
+    )
+    logger.info("✅ openrouter/free with second API key initialized")
     return llm
 
 def load_nvidia_nemotron():
@@ -215,12 +274,9 @@ def load_deepseek():
 # ─────────────────────────────────────────────────────────────
 def ollama_generate_answer(system_prompt: str, question: str, context: str):
     llm = load_llama3_2()
-    from langchain_core.prompts import ChatPromptTemplate
-    prompt = ChatPromptTemplate.from_template("""
-Answer the question based only on the context below. If the answer cannot be found in the context, say "I cannot find this information in the documents.""")
-
+    
     from langchain_core.output_parsers import StrOutputParser
-    chain = prompt | llm | StrOutputParser()
+    chain = system_prompt | llm | StrOutputParser()
     answer = chain.invoke({
         "context": context,
         "question": question
@@ -228,13 +284,19 @@ Answer the question based only on the context below. If the answer cannot be fou
 
     return answer
 
-def gemini_generate_answer(system_prompt: str, question: str, context: str):
+def gemini_generate_answer(system_prompt: str, question: str):
     llm = load_gemini()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     response = llm.generate_content(full_prompt).text
     return response.strip()
 
-def openrouter_generate_answer(system_prompt: str, question: str, context: str):
+def gemini_generate_answer_2(system_prompt: str, question: str):    
+    llm = load_gemini_2()
+    full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
+    response = llm.generate_content(full_prompt).text
+    return response.strip()
+
+def openrouter_generate_answer(system_prompt: str, question: str):
     llm= load_openrouter_free()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     logger.info("🔄 Generating response with Open Router...")
@@ -243,7 +305,17 @@ def openrouter_generate_answer(system_prompt: str, question: str, context: str):
     logger.info("✅ Response generated by Open Router")
     return answer.strip()
 
-def openrouter_stepfun_generate_answer(system_prompt: str, question: str, context: str):
+def openrouter_generate_answer_2(system_prompt: str, question: str):
+    llm= load_openrouter_free_2()
+    full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
+    logger.info("🔄 Generating response with Open Router using second API key...")
+    response = llm.invoke(full_prompt)
+    answer = response.content
+    logger.info("✅ Response generated by Open Router with second API key")
+    return answer.strip()
+
+
+def openrouter_stepfun_generate_answer(system_prompt: str, question: str):
     llm = load_openrouter_stepfun()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     logger.info("🔄 Generating response with StepFun...")
@@ -252,7 +324,16 @@ def openrouter_stepfun_generate_answer(system_prompt: str, question: str, contex
     logger.info("✅ Response generated by StepFun")
     return answer.strip()
 
-def nvidia_nemotron_generate_answer(system_prompt: str, question: str, context: str):
+def openrouter_stepfun_generate_answer_2(system_prompt: str, question: str):
+    llm = load_openrouter_stepfun2()
+    full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
+    logger.info("🔄 Generating response with StepFun using second API key...")
+    response = llm.invoke(full_prompt)
+    answer = response.content
+    logger.info("✅ Response generated by StepFun with second API key")
+    return answer.strip()
+
+def nvidia_nemotron_generate_answer(system_prompt: str, question: str):
     llm = load_nvidia_nemotron()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     logger.info("🔄 Generating response with NVIDIA Nemotron...")
@@ -261,7 +342,7 @@ def nvidia_nemotron_generate_answer(system_prompt: str, question: str, context: 
     logger.info("✅ Response generated by NVIDIA Nemotron")
     return answer.strip()
 
-def arceeai_trinity_generate_answer(system_prompt: str, question: str, context: str):
+def arceeai_trinity_generate_answer(system_prompt: str, question: str):
     llm = load_arceeai_trinity()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     logger.info("🔄 Generating response with ArceeAI Trinity...")
@@ -270,7 +351,7 @@ def arceeai_trinity_generate_answer(system_prompt: str, question: str, context: 
     logger.info("✅ Response generated by ArceeAI Trinity")
     return answer.strip()
 
-def deepseek_generate_answer(system_prompt: str, question: str, context: str):
+def deepseek_generate_answer(system_prompt: str, question: str):
     client = load_deepseek()
     full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
     logger.info("🔄 Generating response with DeepSeek...")
@@ -337,7 +418,7 @@ Document context:
 {context}"""
 
         # 4. Call Generate Answer
-        answer= openrouter_generate_answer(system_prompt, question, context)
+        answer= handle_timeout(system_prompt, question)
 
         logger.info("✅ Response generated")
 

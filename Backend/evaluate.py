@@ -3,7 +3,6 @@ from langsmith import Client
 from langsmith.evaluation import evaluate
 from langsmith.schemas import Run, Example
 from services.chatservice import generate_answer
-import google.generativeai as genai
 
 client = Client()
 
@@ -12,11 +11,8 @@ EVAL_SESSION_ID = "b05afd8330f1"
 
 # ── Judge LLM ─────────────────────────────────────────────────────────────────
 def get_judge_llm():
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(model="openrouter/free",
-                        temperature=0.0,
-                        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-                        openai_api_base="https://openrouter.ai/api/v1")
+    from groq import Groq
+    llm = Groq(api_key=os.getenv("GROQ_API_KEY"))
     return llm
                         
 
@@ -52,9 +48,12 @@ Score the predicted answer from 0 to 1 based on correctness compared to the expe
 
 Respond with only a number between 0 and 1."""
 
-    response = llm.invoke(prompt).content
+    response = llm.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": prompt}]
+    )
     try:
-        score = float(response.content.strip())
+        score = float(response.choices[0].message.content.strip())
         score = max(0.0, min(1.0, score))
     except:
         score = 0.0
@@ -84,9 +83,12 @@ Score from 0 to 1:
 
 Respond with only a number between 0 and 1."""
 
-    response = llm.invoke(prompt).content
+    response = llm.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": prompt}]
+    )
     try:
-        score = float(response.content.strip())
+        score = float(response.choices[0].message.content.strip())
         score = max(0.0, min(1.0, score))
     except:
         score = 0.0
