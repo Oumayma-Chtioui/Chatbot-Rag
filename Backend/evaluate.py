@@ -52,7 +52,7 @@ Score the predicted answer from 0 to 1 based on correctness compared to the expe
 
 Respond with only a number between 0 and 1."""
 
-    response = llm.generate_content(prompt).text
+    response = llm.invoke(prompt).content
     try:
         score = float(response.content.strip())
         score = max(0.0, min(1.0, score))
@@ -84,7 +84,7 @@ Score from 0 to 1:
 
 Respond with only a number between 0 and 1."""
 
-    response = llm.generate_content(prompt).text
+    response = llm.invoke(prompt).content
     try:
         score = float(response.content.strip())
         score = max(0.0, min(1.0, score))
