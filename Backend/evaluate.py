@@ -1,7 +1,4 @@
 import os
-
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
 from langsmith import Client
 from langsmith.evaluation import evaluate
 from langsmith.schemas import Run, Example
@@ -15,9 +12,13 @@ EVAL_SESSION_ID = "b05afd8330f1"
 
 # ── Judge LLM ─────────────────────────────────────────────────────────────────
 def get_judge_llm():
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    llm = genai.GenerativeModel('models/gemini-2.5-flash')
+    from langchain_openai import ChatOpenAI
+    llm = ChatOpenAI(model="openrouter/free",
+                        temperature=0.0,
+                        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+                        openai_api_base="https://openrouter.ai/api/v1")
     return llm
+                        
 
 
 # ── Define how to run your pipeline on each example ──────────────────────────
