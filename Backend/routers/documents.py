@@ -1,4 +1,5 @@
 from typing import List
+from unittest import result
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 import shutil, os, uuid
@@ -96,6 +97,7 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
         # Save to MongoDB
         result = documents_collection.insert_one(doc_record)
         logger.info(f"✅ Saved to MongoDB with ID: {result.inserted_id}")
+        logger.info(f"✅ Document record: {doc_record}")
         
         return {
             "message": "Document processed and indexed successfully",

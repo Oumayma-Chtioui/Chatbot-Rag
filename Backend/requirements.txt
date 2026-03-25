@@ -18,3 +18,10 @@ pypdf
 faiss-cpu
 google-generativeai
 sentence-transformers
+
+langsmith
+
+langchain-google-genai
+
+openai
+langchain-openai

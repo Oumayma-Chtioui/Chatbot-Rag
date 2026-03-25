@@ -271,13 +271,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
               <div className="msg-bubble" style={{ whiteSpace: "pre-line" }}>
                 {msg.content}
               </div>
-              {msg.sources && msg.sources.length > 0 && (
-                <div className="source-chips">
-                  {msg.sources.map((s: string, i: number) => (
-                    <div key={i} className="source-chip">📄 {s}</div>
-                  ))}
-                </div>
-              )}
+              
               <div className="msg-meta">{msg.time}</div>
             </div>
           </div>
