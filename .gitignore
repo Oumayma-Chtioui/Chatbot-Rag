@@ -5,3 +5,4 @@ Backend/uploads
 .gitignore
 *.pdf
 *.pdf
+*.docx

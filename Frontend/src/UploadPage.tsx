@@ -55,8 +55,13 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
     }
   };
 
-   const handleDelete = (id: string): void => {
-     setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
+   const handleDelete = async (id: string): Promise<void> => {
+     try {
+           await api.deleteDocument(id);
+            setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
+         } catch (err) {
+           console.error("Failed to delete document:", err);
+         }
    };
 
   const handleFileDrop = async (file: File) => {
