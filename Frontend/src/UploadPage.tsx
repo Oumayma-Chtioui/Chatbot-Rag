@@ -19,54 +19,41 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   const [dragging, setDragging] = useState<boolean>(false);
   const [uploading, setUploading] = useState<boolean>(false);
 
-  // const handleAddUrl = async (): Promise<void> => {
-  //   if (!url.trim() || uploading) return;
-    
-  //   setUploading(true);
-  //   const tempId = Date.now();
-  //   const newDoc: Doc = { 
-  //     id: tempId, 
-  //     name: url, 
-  //     type: "url", 
-  //     size: "Web page", 
-  //     status: "processing" 
-  //   };
-    
-  //   setDocs((d: Doc[]) => [...d, newDoc]);
-  //   const capturedUrl = url;
-  //   setUrl("");
+  const handleAddUrl = async (url: string): Promise<void> => {
+      const tempId = `temp-${Date.now()}`;
+      setUploading(true);    
+      // Add temp doc immediately so user sees feedback
+      setDocs((d: Doc[]) => [...d, {
+        id: tempId,
+        name: url,
+        type: "url",
+        size: "Web page",
+        status: "processing",
+      }]);
+      try {
+      const result = await api.addUrlDocument(url, sessionId);
+      setDocs((d: Doc[]) =>
+        d.map((doc: Doc) =>
+          doc.id === tempId
+            ? {
+                id: result.document.id,
+                name: result.document.name,
+                type: "url",
+                size: "Web Page",
+                status: "ready",
+              }
+            : doc
+        )
+      );
 
-  //   try {
-  //     const token = localStorage.getItem('token');
-  //     if (!token) throw new Error('No token');
-
-  //     const response = await fetch('http://localhost:8000/documents/url', {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json',
-  //         'Authorization': `Bearer ${token}`
-  //       },
-  //       body: JSON.stringify({ url: capturedUrl })
-  //     });
-
-  //     if (!response.ok) throw new Error('Upload failed');
-
-  //     const data = await response.json();
-  //     console.log('✅ URL uploaded:', data);
-
-  //     setDocs((d: Doc[]) => 
-  //       d.map((doc: Doc) => 
-  //         doc.id === tempId ? { ...doc, status: "ready" } : doc
-  //       )
-  //     );
-  //   } catch (error) {
-  //     console.error('❌ URL upload error:', error);
-  //     setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== tempId));
-  //     alert('Failed to add URL. Please try again.');
-  //   } finally {
-  //     setUploading(false);
-  //   }
-  // };
+    } catch (error) {
+      console.error('❌ URL upload error:', error);
+      setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== tempId));
+      alert('Failed to add URL. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
    const handleDelete = (id: string): void => {
      setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
@@ -146,12 +133,12 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
               placeholder="https://example.com/article"
               value={url}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setUrl(e.target.value)}
-              //onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => e.key === "Enter" && handleAddUrl()}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => e.key === "Enter" && handleAddUrl(url)}
               disabled={uploading}
             />
             <button 
               className="url-btn" 
-              //onClick={handleAddUrl}
+              onClick={() => {if (url && !uploading && sessionId) handleAddUrl(url)}}
               disabled={uploading || !url.trim()}
             >
               {uploading ? 'Uploading...' : 'Load URL'}
@@ -190,6 +177,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
                 }}
                 disabled={uploading || !sessionId} // ✅ disable until sessionId ready
               />
+              {uploading ? 'Uploading...' : 'Load URL'}
               <span className="btn-outline">📂 Browse files</span>
             </label>
           </div>

@@ -27,3 +27,7 @@ openai
 langchain-openai
 
 groq
+
+requests
+beautifulsoup4
+trafilatura

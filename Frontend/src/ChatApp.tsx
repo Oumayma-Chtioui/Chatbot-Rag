@@ -186,6 +186,18 @@ export default function App() {
       })
     );
   };
+  const handleDeleteSession = async (sessionId: string): Promise<void> => {
+    try {
+      await api.deleteSession(sessionId);
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setView('upload');
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
+  };
 
   // Add more documents to current chat session
   const handleAddDocsToSession = (newDocs: Doc[]): void => {
@@ -224,6 +236,7 @@ export default function App() {
               onNewChat={handleNewChat}
               userName={userName}
               onLogout={handleLogout}
+              onDeleteSession={handleDeleteSession}
             />
           </div>
           <div className="main-content">

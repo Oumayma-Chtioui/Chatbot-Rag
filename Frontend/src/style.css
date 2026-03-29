@@ -94,6 +94,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .session-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-time { font-size: 11px; color: var(--text3); flex-shrink: 0; }
 
+.session-delete {background: transparent;border: none;cursor: pointer;color: var(--text3);padding: 4px;border-radius: var(--radius-sm); transition: var(--transition); opacity: 0;}
+
+.session-item:hover .session-delete { opacity: 1;}
+
+.session-delete:hover { color: var(--danger); background: transparent;}
+
 .sidebar-footer { padding: 12px 8px; border-top: 1px solid var(--border); }
 .user-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition); }
 .user-card:hover { background: var(--surface2); }

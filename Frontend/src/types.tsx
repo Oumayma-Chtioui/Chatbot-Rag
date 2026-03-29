@@ -37,6 +37,7 @@ export interface SidebarProps {
   onNewChat: () => void;
   userName: string;
   onLogout: () => void;
+  onDeleteSession: (id: string) => void;
 }
 
 export interface ChatPageProps {

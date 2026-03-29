@@ -42,6 +42,14 @@ def delete_session(session_id: str, current_user: UserModel = Depends(get_curren
         raise HTTPException(status_code=404, detail="Session not found")
     db.delete(session)
     db.commit()
+
+    from services.rag_services import delete_session_vectors
+    delete_session_vectors(current_user.id, session_id)
+
+    from database import documents_collection, messages_collection
+    documents_collection.delete_many({"session_id": session_id, "user_id": current_user.id})
+    messages_collection.delete_many({"session_id": session_id})
+
     return {"ok": True}
 
 @router.get("/sessions/{session_id}/messages")

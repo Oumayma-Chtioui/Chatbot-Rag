@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { Session, Doc, Message, AuthPageProps, SidebarProps, ChatPageProps, UploadPageProps } from './types.tsx';  // Import interfaces
-function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onNewChat, userName, onLogout }: SidebarProps) {
+function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onNewChat, userName, onLogout, onDeleteSession }: SidebarProps) {
   return (
     <>
       
@@ -32,6 +32,16 @@ function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onN
             <div className="session-dot" style={{ background: activeSession === s.id ? "var(--accent)" : undefined }} />
             <div className="session-title">{s.title}</div>
             <div className="session-time">{s.time}</div>
+            <button
+              className="session-delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteSession(s.id);
+              }}
+            >
+              🗑
+            </button>
+
           </div>
         ))}
       </div>

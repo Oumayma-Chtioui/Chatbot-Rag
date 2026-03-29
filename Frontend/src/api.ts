@@ -58,10 +58,7 @@ export async function register(name: string, email: string, password: string) {
 /**
  * Upload a document (optionally assign to session)
  */
-export async function uploadDocument(
-  file: File,
-  sessionId?: string
-): Promise<any> {
+export async function uploadDocument(file: File, sessionId?: string): Promise<any> {
   const formData = new FormData();
   formData.append("file", file);
   
@@ -196,6 +193,23 @@ export async function deleteDocument(docId: string): Promise<any> {
   
   return await res.json();
 }
+
+/**
+ * Delete a session
+ */
+export async function deleteSession(sessionId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error("Failed to delete session");
+  }
+
+  return await res.json();
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat/RAG APIs

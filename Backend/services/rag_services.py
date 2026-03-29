@@ -1,5 +1,5 @@
 import os
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -37,10 +37,18 @@ async def process_document(file, file_path, user_id, session_id):
     logger.info(f"🔍 FAISS index exists: {faiss_exists}")
     
     try:
-        logger.info(f"📄 Processing document: {file.filename}")
+        source_name = file_path if file is None else file.filename
+        logger.info(f"📄 Processing document: {source_name}")
         
         # Load document based on file type
-        if file.filename.endswith('.pdf'):
+        if file_path.startswith('https://') or file_path.startswith('http://'):
+            from services.scraper_service import scrape_url
+            documents = scrape_url(file_path)
+            logger.info(f"✅ Scraped content from URL")
+            if not documents or len(documents) == 0:
+                logger.warning(f"⚠️ No content extracted from URL: {file_path}")
+                return {"success": False, "error": "No content could be extracted from this URL", "chunks": 0} 
+        elif file.filename.endswith('.pdf'):
             loader = PyPDFLoader(file_path)
             documents = loader.load()
             logger.info(f"✅ Loaded PDF with {len(documents)} pages")
@@ -52,13 +60,17 @@ async def process_document(file, file_path, user_id, session_id):
             loader = TextLoader(file_path, encoding='utf-8')
             documents = loader.load()
             logger.info(f"✅ Loaded markdown file")
+        elif file.filename.endswith('.docx'):
+            loader = Docx2txtLoader(file_path)
+            documents = loader.load()
+            logger.info(f"✅ Loaded DOCX file")
         else:
             logger.warning(f"⚠️  Unsupported file type: {file.filename}")
             return {"success": False, "error": "Unsupported file type", "chunks": 0}
         
         # Add metadata to each document
         for doc in documents:
-            doc.metadata["source"] = file.filename
+            doc.metadata["source"] = source_name
             doc.metadata["upload_time"] = str(datetime.now())
             doc.metadata["doc_id"] = str(uuid.uuid4())
             doc.metadata["user_id"] = user_id
@@ -235,12 +247,17 @@ def delete_session_vectors(user_id: int, session_id: str):
         f"user_{user_id}",
         f"session_{clean_session_id}"
     )
-    
+    clean_memory_path = session_id.replace("session_", "").replace("session-", "")
+    memory_path=os.path.join(os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean_memory_path}")
+
     if os.path.exists(VECTOR_PATH):
         import shutil
         try:
             shutil.rmtree(VECTOR_PATH)
             logger.info(f"🗑️  Deleted vector store: {VECTOR_PATH}")
+            if os.path.exists(memory_path):
+                shutil.rmtree(memory_path)
+                logger.info(f"🗑️  Deleted memory store: {memory_path}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to delete vector store: {e}")
