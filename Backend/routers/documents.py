@@ -173,22 +173,58 @@ def assign_documents_to_session(
     }
 
 @router.post("/documents/url")
-def add_url_document(req: UrlDocRequest,session_id: Optional[str] = None, current_user: UserModel = Depends(get_current_user)):
+async def add_url_document(
+    req: UrlDocRequest,
+    session_id: Optional[str] = None,
+    current_user: UserModel = Depends(get_current_user)
+):
     doc_id = str(uuid.uuid4())
-    doc = {
-        "id": doc_id,
-        "user_id": current_user.id,
-        "name": req.url,
-        "type": "url",
-        "size": "Web page",
-        "path": req.url,
-        "status": "ready",
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    documents_collection.insert_one({**doc, "_id": doc_id})
-    logger.info(f"🔗 Added URL document: {req.url}")
-    return {"id": doc["id"], "name": doc["name"], "type": doc["type"], "size": doc["size"], "status": doc["status"]}
-    
+
+    if not session_id:
+        session_id = f"session_{uuid.uuid4()}"
+        logger.info(f"🆕 No session_id provided, generated: {session_id}")
+
+    logger.info(f"🔗 Processing URL: {req.url}")
+
+    try:
+        process_result = await process_document(
+            file=None,
+            file_path=req.url,
+            user_id=current_user.id,
+            session_id=session_id
+        )
+
+        doc = {
+            "id": doc_id,
+            "user_id": current_user.id,
+            "session_id": session_id,
+            "name": req.url,
+            "type": "url",
+            "size": "Web page",
+            "path": req.url,
+            "status": "indexed" if process_result.get("success") else "failed",
+            "chunks": process_result.get("chunks", 0),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+        documents_collection.insert_one({**doc, "_id": doc_id})
+        logger.info(f"✅ URL document indexed: {req.url}")
+
+        return {
+            "document": {
+                "id": doc_id,
+                "name": req.url,
+                "type": "url",
+                "size": "Web page",
+                "status": doc["status"],
+                "chunks": process_result.get("chunks", 0),
+                "session_id": session_id,
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"❌ URL processing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str, current_user: UserModel = Depends(get_current_user)):
     doc = documents_collection.find_one({"id": doc_id, "user_id": current_user.id})
