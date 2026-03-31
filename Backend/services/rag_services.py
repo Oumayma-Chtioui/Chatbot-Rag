@@ -42,8 +42,8 @@ async def process_document(file, file_path, user_id, session_id):
         
         # Load document based on file type
         if file_path.startswith('https://') or file_path.startswith('http://'):
-            from services.scraper_service import scrape_url
-            documents = scrape_url(file_path)
+            from services.scraper_service import scrape_website
+            documents = scrape_website(file_path)
             logger.info(f"✅ Scraped content from URL")
             if not documents or len(documents) == 0:
                 logger.warning(f"⚠️ No content extracted from URL: {file_path}")
@@ -248,16 +248,15 @@ def delete_session_vectors(user_id: int, session_id: str):
         f"session_{clean_session_id}"
     )
     clean_memory_path = session_id.replace("session_", "").replace("session-", "")
-    memory_path=os.path.join(os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean_memory_path}")
+    memory_path=os.path.join(os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean_memory_path}_memory")
 
     if os.path.exists(VECTOR_PATH):
         import shutil
         try:
             shutil.rmtree(VECTOR_PATH)
             logger.info(f"🗑️  Deleted vector store: {VECTOR_PATH}")
-            if os.path.exists(memory_path):
-                shutil.rmtree(memory_path)
-                logger.info(f"🗑️  Deleted memory store: {memory_path}")
+            shutil.rmtree(memory_path)
+            logger.info(f"🗑️  Deleted memory store: {memory_path}")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to delete vector store: {e}")

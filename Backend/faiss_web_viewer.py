@@ -38,6 +38,8 @@ def load_db():
         embeddings,
         allow_dangerous_deserialization=True
     )
+    print("VECTOR PATH:", VECTOR_PATH)
+    print("PATH EXISTS:", os.path.exists(VECTOR_PATH))
     return db
 
 HTML_TEMPLATE = """
@@ -337,13 +339,15 @@ def get_stats():
         for doc in all_docs:
             if hasattr(doc, 'metadata'):
                 sources.add(doc.metadata.get('source', 'Unknown'))
-        
+        print("INDEX TOTAL:", index.ntotal)
+        print("DOCSTORE SIZE:", len(docstore._dict))
         return jsonify({
             "total_vectors": index.ntotal,
             "dimension": index.d,
             "total_documents": len(all_docs),
             "sources": list(sources)
         })
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

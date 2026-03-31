@@ -291,8 +291,9 @@ def delete_vector_store(user_id: str, session_id: str):
         return False
     
     try:
-        shutil.rmtree(vector_path)
-        print(f"✅ Successfully deleted vector store")
+        from services.rag_services import delete_vector_store as rag_delete_vector_store
+        if rag_delete_vector_store(user_id, session_id):
+            print(f"✅ Successfully deleted vector store")
         
         # Check if user directory is now empty
         user_path = os.path.join(VECTOR_BASE_PATH, f"user_{user_id}")
