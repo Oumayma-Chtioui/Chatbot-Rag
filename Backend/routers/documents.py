@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Documents"])
 
+from services.shared_state import cancellation_registry
+
 @router.get("/documents")
 def get_documents(session_id: Optional[str] = None,current_user: UserModel = Depends(get_current_user)):
     """
@@ -77,7 +79,8 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
             file,
             temp_path,
             current_user.id,
-            session_id or "default"
+            session_id or "default",
+            doc_id=doc_id
         )
         
         # Create document record for MongoDB
@@ -191,7 +194,9 @@ async def add_url_document(
             file=None,
             file_path=req.url,
             user_id=current_user.id,
-            session_id=session_id
+            session_id=session_id,
+            max_pages=req.max_pages,
+            doc_id=doc_id
         )
 
         doc = {
@@ -283,3 +288,12 @@ def get_document(
         raise HTTPException(status_code=404, detail="Document not found")
     
     return doc
+
+@router.post("/documents/cancel/{doc_id}")
+def cancel_document_processing(doc_id: str, current_user: UserModel = Depends(get_current_user)):
+    cancellation_registry[doc_id] = True
+    logger.info(f"🛑 Cancellation requested for doc: {doc_id}")
+    return {"ok": True, "cancelled": doc_id}
+
+
+

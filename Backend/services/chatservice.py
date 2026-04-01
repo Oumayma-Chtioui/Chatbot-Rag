@@ -305,7 +305,6 @@ def deepseek_generate_answer(system_prompt: str, question: str):
 # ─────────────────────────────────────────────────────────────
 def reformulate_query(question: str):
     logger.info("🔄 Reformulating query for better retrieval...")
-    llm = load_openrouter_free()
     reformulation_prompt = f"""You are a search query optimizer for a RAG system. 
 Your job is to reformulate the user's question to improve document retrieval.
 
@@ -317,7 +316,7 @@ Rules:
 
 Original question: {question}
 Reformulated question (keep proper nouns unchanged):"""
-    response = llm.invoke(reformulation_prompt)
+    response = handle_timeout(reformulation_prompt, question)
     logger.info(f"✅ Query reformulated: {response.content.strip()}")
     return response.content.strip()
 
@@ -327,7 +326,7 @@ Reformulated question (keep proper nouns unchanged):"""
 # ─────────────────────────────────────────────────────────────
 def generate_answer(question: str, user_id: str, session_id: str):
 
-    question = reformulate_query(question)
+    # question = reformulate_query(question)
 
     logger.info(f"🔍 Generating answer for: {question[:50]}...")
 

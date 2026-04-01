@@ -6,159 +6,132 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from datetime import datetime
 import logging
 import uuid
-
+from services.shared_state import cancellation_registry
 logger = logging.getLogger(__name__)
 
+def is_cancelled(doc_id):
+    return doc_id and cancellation_registry.get(doc_id, False) 
 
-async def process_document(file, file_path, user_id, session_id):
-    """
-    Process document and add to vector store with per-session isolation
-    
-    CRITICAL FIX: Don't add "session_" prefix if already present
-    """
-    # Remove "session_" prefix if it exists to avoid double prefix
+async def process_document(file, file_path, user_id, session_id, max_pages, doc_id=None):
     clean_session_id = session_id.replace("session_", "").replace("session-", "")
-    
-    # Build path for this user's session
+
     VECTOR_PATH = os.path.join(
         os.getcwd(),
         "vector_store",
         f"user_{user_id}",
-        f"session_{clean_session_id}"  # Now always has exactly one "session_" prefix
+        f"session_{clean_session_id}"
     )
 
-    # Create directory structure if it doesn't exist
     os.makedirs(VECTOR_PATH, exist_ok=True)
     logger.info(f"📁 Vector store path: {VECTOR_PATH}")
-    
-    # Check if FAISS index FILE exists (not just directory)
+
     faiss_index_path = os.path.join(VECTOR_PATH, "index.faiss")
     faiss_exists = os.path.exists(faiss_index_path)
-    logger.info(f"🔍 FAISS index exists: {faiss_exists}")
-    
+
     try:
         source_name = file_path if file is None else file.filename
         logger.info(f"📄 Processing document: {source_name}")
-        
-        # Load document based on file type
-        if file_path.startswith('https://') or file_path.startswith('http://'):
-            from services.scraper_service import scrape_website
-            documents = scrape_website(file_path)
-            logger.info(f"✅ Scraped content from URL")
-            if not documents or len(documents) == 0:
-                logger.warning(f"⚠️ No content extracted from URL: {file_path}")
-                return {"success": False, "error": "No content could be extracted from this URL", "chunks": 0} 
+
+        # 🔴 CANCEL EARLY
+        if is_cancelled(doc_id):
+            return {"success": False, "error": "Cancelled early", "chunks": 0}
+
+        # ================= LOAD =================
+        if file_path.startswith('http'):
+            from services.scraper_service import scrape_website, scrape_url
+            documents = scrape_url(file_path,doc_id=doc_id) if max_pages == 1 else scrape_website(file_path, max_pages,max_workers=7, doc_id=doc_id)
+
         elif file.filename.endswith('.pdf'):
-            loader = PyPDFLoader(file_path)
-            documents = loader.load()
-            logger.info(f"✅ Loaded PDF with {len(documents)} pages")
-        elif file.filename.endswith('.txt'):
-            loader = TextLoader(file_path, encoding='utf-8')
-            documents = loader.load()
-            logger.info(f"✅ Loaded text file")
-        elif file.filename.endswith('.md'):
-            loader = TextLoader(file_path, encoding='utf-8')
-            documents = loader.load()
-            logger.info(f"✅ Loaded markdown file")
+            documents = PyPDFLoader(file_path).load()
+
+        elif file.filename.endswith(('.txt', '.md')):
+            documents = TextLoader(file_path, encoding='utf-8').load()
+
         elif file.filename.endswith('.docx'):
-            loader = Docx2txtLoader(file_path)
-            documents = loader.load()
-            logger.info(f"✅ Loaded DOCX file")
+            documents = Docx2txtLoader(file_path).load()
+
         else:
-            logger.warning(f"⚠️  Unsupported file type: {file.filename}")
             return {"success": False, "error": "Unsupported file type", "chunks": 0}
-        
-        # Add metadata to each document
-        for doc in documents:
-            doc.metadata["source"] = source_name
-            doc.metadata["upload_time"] = str(datetime.now())
-            doc.metadata["doc_id"] = str(uuid.uuid4())
-            doc.metadata["user_id"] = user_id
-            doc.metadata["session_id"] = clean_session_id
-        
-        # Split into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-        chunks = text_splitter.split_documents(documents)
-        logger.info(f"✂️  Split into {len(chunks)} chunks")
-        
-        if not chunks:
-            logger.warning("⚠️  No chunks created from document")
+
+        if not documents:
             return {"success": False, "error": "No content extracted", "chunks": 0}
-        
-        # Initialize embeddings model
-        logger.info("🔄 Initializing embeddings model...")
+
+        if is_cancelled(doc_id):
+            return {"success": False, "error": "Cancelled after load", "chunks": 0}
+
+        # ================= METADATA =================
+        for doc in documents:
+            doc.metadata.update({
+                "source": source_name,
+                "upload_time": str(datetime.now()),
+                "doc_id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "session_id": clean_session_id
+            })
+
+        # ================= CHUNKING =================
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+
+        chunks = []
+        for doc in documents:
+            if is_cancelled(doc_id):
+                return {"success": False, "error": "Cancelled during chunking", "chunks": 0}
+            chunks.extend(splitter.split_documents([doc]))
+
+        logger.info(f"✂️ Split into {len(chunks)} chunks")
+
+        if not chunks:
+            return {"success": False, "error": "No chunks created", "chunks": 0}
+
+        # ================= EMBEDDINGS =================
         embeddings = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
-        
-        # Create or update based on FILE existence, not directory
-        if faiss_exists:
-            logger.info("📂 Loading existing vector store...")
-            try:
-                db = FAISS.load_local(
-                    VECTOR_PATH, 
-                    embeddings, 
-                    allow_dangerous_deserialization=True
-                )
-                logger.info("✅ Existing vector store loaded")
-                
-                # Add new chunks to existing store
-                db.add_documents(chunks)
-                logger.info(f"➕ Added {len(chunks)} new chunks to existing store")
-                
-            except Exception as load_error:
-                logger.error(f"❌ Failed to load existing store: {load_error}")
-                logger.info("🆕 Creating new vector store instead...")
-                db = FAISS.from_documents(chunks, embeddings)
-                logger.info(f"✅ Created new store with {len(chunks)} chunks")
-        else:
-            logger.info("🆕 Creating new vector store (first document)...")
-            db = FAISS.from_documents(chunks, embeddings)
-            logger.info(f"✅ Created new store with {len(chunks)} chunks")
-        
-        # Save vector store
-        logger.info("💾 Saving vector store...")
+
+        if is_cancelled(doc_id):
+            return {"success": False, "error": "Cancelled before embeddings", "chunks": 0}
+
+        # 🔥 IMPORTANT: batch processing (interruptible)
+        BATCH_SIZE = 32
+        all_batches = [chunks[i:i+BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+
+        db = None
+
+        for i, batch in enumerate(all_batches):
+            if is_cancelled(doc_id):
+                logger.info(f"🛑 Cancelled during embeddings at batch {i}")
+                return {"success": False, "error": "Cancelled during embeddings", "chunks": 0}
+
+            if db is None:
+                db = FAISS.from_documents(batch, embeddings)
+            else:
+                db.add_documents(batch)
+
+            logger.info(f"✅ Processed batch {i+1}/{len(all_batches)}")
+
+        # ================= SAVE =================
+        if is_cancelled(doc_id):
+            return {"success": False, "error": "Cancelled before saving", "chunks": 0}
+
         db.save_local(VECTOR_PATH)
-        logger.info(f"✅ Vector store saved to {VECTOR_PATH}")
-        
-        # Verify the store was created
-        if os.path.exists(faiss_index_path):
-            files = os.listdir(VECTOR_PATH)
-            logger.info(f"📋 Vector store files: {files}")
-            
-            # Get file sizes
-            for f in files:
-                fpath = os.path.join(VECTOR_PATH, f)
-                if os.path.isfile(fpath):
-                    size = os.path.getsize(fpath)
-                    logger.info(f"   📄 {f}: {size/1024:.2f} KB")
-        else:
-            logger.error(f"❌ FAISS index not found after save!")
-        
+
+        logger.info("💾 Vector store saved")
+
         return {
             "success": True,
             "chunks": len(chunks),
             "vector_store": VECTOR_PATH,
-            "session_id": clean_session_id  # Return clean session ID
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error processing document: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "success": False,
-            "error": str(e),
-            "chunks": 0
+            "session_id": clean_session_id
         }
 
+    except Exception as e:
+        logger.error(f"❌ Error: {e}")
+        return {"success": False, "error": str(e), "chunks": 0}
 
 def get_vector_store(user_id: int, session_id: str):
     """

@@ -18,6 +18,16 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   const [url, setUrl] = useState<string>("");
   const [dragging, setDragging] = useState<boolean>(false);
   const [uploading, setUploading] = useState<boolean>(false);
+  const [maxPages, setMaxPages] = useState<number>();
+
+  const crawlOptions = [
+    { label: "Single page", value: 1 },
+    { label: "Small company site", value: 20 },
+    { label: "Documentation / Manual", value: 50 },
+    { label: "Knowledge base", value: 100 },
+    { label: "Large docs / Blog", value: 200 },
+    { label: "E-commerce / Large site", value: 500 },
+  ];
 
   const handleAddUrl = async (url: string): Promise<void> => {
       const tempId = `temp-${Date.now()}`;
@@ -31,7 +41,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
         status: "processing",
       }]);
       try {
-      const result = await api.addUrlDocument(url, sessionId);
+      const result = await api.addUrlDocument(url, sessionId, maxPages);
       setDocs((d: Doc[]) =>
         d.map((doc: Doc) =>
           doc.id === tempId
@@ -56,13 +66,19 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   };
 
    const handleDelete = async (id: string): Promise<void> => {
-     try {
-           await api.deleteDocument(id);
-            setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
-         } catch (err) {
-           console.error("Failed to delete document:", err);
-         }
-   };
+    try {
+      await api.cancelDocumentProcessing(id);
+    } catch (err) {
+      // Ignore — doc may already be done processing
+    }
+    try {
+          await api.deleteDocument(id);
+          setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
+        } catch (err) {
+          console.error("Failed to delete document:", err);
+        }
+    setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== id));
+  };
 
   const handleFileDrop = async (file: File) => {
   try {
@@ -132,22 +148,50 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
         </div>
 
         {uploadType === "url" ? (
-          <div className="url-input-row">
-            <input
-              className="form-input"
-              placeholder="https://example.com/article"
-              value={url}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setUrl(e.target.value)}
-              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => e.key === "Enter" && handleAddUrl(url)}
-              disabled={uploading}
-            />
-            <button 
-              className="url-btn" 
-              onClick={() => {if (url && !uploading && sessionId) handleAddUrl(url)}}
-              disabled={uploading || !url.trim()}
-            >
-              {uploading ? 'Uploading...' : 'Load URL'}
-            </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div className="url-input-row">
+              <input
+                className="form-input"
+                placeholder="https://example.com/article"
+                value={url}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setUrl(e.target.value)}
+                onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => e.key === "Enter" && handleAddUrl(url)}
+                disabled={uploading || !sessionId}
+              />
+              <button
+                className="url-btn"
+                onClick={() => handleAddUrl(url)}
+                disabled={uploading || !url.trim() || !sessionId}
+              >
+                {uploading ? "Uploading..." : "Load URL"}
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: 12, color: "var(--text3)", whiteSpace: "nowrap" }}>
+                Crawl depth:
+              </span>
+              <select
+                value={maxPages}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setMaxPages(Number(e.target.value))}
+                disabled={uploading}
+                style={{
+                  background: "var(--bg2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  flex: 1,
+                }}
+              >
+                {crawlOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label} ({opt.value === 1 ? "1 page" : `up to ${opt.value} pages`})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         ) : (
           <div

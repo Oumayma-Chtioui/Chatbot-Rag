@@ -87,7 +87,8 @@ export async function uploadDocument(file: File, sessionId?: string): Promise<an
  */
 export async function addUrlDocument(
   url: string,
-  sessionId?: string
+  sessionId?: string,
+  maxPages: number = 1
 ): Promise<any> {
   const endpoint = sessionId
     ? `${API_BASE}/documents/url?session_id=${sessionId}`
@@ -96,7 +97,7 @@ export async function addUrlDocument(
   const res = await fetch(endpoint, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, max_pages: maxPages }),
   });
   
   if (!res.ok) {
@@ -385,5 +386,15 @@ export async function getSessions(): Promise<any> {
 export async function getSessionMessages(sessionId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, { headers: getHeaders() });
   if (!res.ok) throw new Error("Failed to fetch messages");
+  return await res.json();
+}
+
+
+export async function cancelDocumentProcessing(docId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/documents/cancel/${docId}`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to cancel");
   return await res.json();
 }

@@ -31,3 +31,4 @@ groq
 requests
 beautifulsoup4
 trafilatura
+playwright

@@ -24,3 +24,4 @@ class MessageCreate(BaseModel):
 
 class UrlDocRequest(BaseModel):
     url: str
+    max_pages: int = 1
