@@ -8,6 +8,7 @@ import logging
 import uuid
 from services.shared_state import cancellation_registry
 logger = logging.getLogger(__name__)
+import time
 
 def is_cancelled(doc_id):
     return doc_id and cancellation_registry.get(doc_id, False) 
@@ -28,6 +29,8 @@ async def process_document(file, file_path, user_id, session_id, max_pages, doc_
     faiss_index_path = os.path.join(VECTOR_PATH, "index.faiss")
     faiss_exists = os.path.exists(faiss_index_path)
 
+    start_time=time.time()
+
     try:
         source_name = file_path if file is None else file.filename
         logger.info(f"📄 Processing document: {source_name}")
@@ -40,7 +43,9 @@ async def process_document(file, file_path, user_id, session_id, max_pages, doc_
         if file_path.startswith('http'):
             from services.scraper_service import scrape_website, scrape_url
             documents = scrape_url(file_path,doc_id=doc_id) if max_pages == 1 else scrape_website(file_path, max_pages,max_workers=7, doc_id=doc_id)
-
+        elif file_path.startswith('fsm'):
+            from services.scraper_service import scrape_website, scrape_url
+            documents = scrape_url(file_path,doc_id=doc_id) if max_pages == 1 else scrape_website(file_path, max_pages,max_workers=7, doc_id=doc_id)
         elif file.filename.endswith('.pdf'):
             documents = PyPDFLoader(file_path).load()
 
@@ -120,7 +125,12 @@ async def process_document(file, file_path, user_id, session_id, max_pages, doc_
 
         db.save_local(VECTOR_PATH)
 
+    
+
         logger.info("💾 Vector store saved")
+
+        end_time = time.time()
+        logger.info(f"⏱️  Total processing time: {end_time - start_time:.2f} seconds")
 
         return {
             "success": True,

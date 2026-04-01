@@ -177,10 +177,10 @@ def load_gemini():
 
 def load_gemini_2():
     import google.generativeai  as genai
-    logger.info("🔄 Initializing gemini-2-flash LLM...")
+    logger.info("🔄 Initializing gemini-2.5-flash LLM...")
     genai.configure(api_key=os.getenv("GEMINI_API_KEY2"))
-    llm = genai.GenerativeModel('models/gemini-2-flash')
-    logger.info("✅ gemini-2-flash initialized")
+    llm = genai.GenerativeModel('models/gemini-2.5-flash')
+    logger.info("✅ gemini-2.5-flash initialized")
     return llm
 
 def load_openrouter_stepfun():

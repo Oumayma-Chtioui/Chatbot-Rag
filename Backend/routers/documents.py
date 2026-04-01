@@ -77,9 +77,10 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
 
         process_result = await process_document(
             file,
-            temp_path,
-            current_user.id,
-            session_id or "default",
+            file_path=temp_path,
+            user_id=current_user.id,
+            session_id=session_id or "default",
+            max_pages=0,
             doc_id=doc_id
         )
         

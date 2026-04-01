@@ -226,7 +226,8 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
                 }}
                 disabled={uploading || !sessionId} // ✅ disable until sessionId ready
               />
-              {uploading ? 'Uploading...' : 'Load URL'}
+              <span>{uploading ? 'Uploading...' : 'Load URL'}</span>
+              
               <span className="btn-outline">📂 Browse files</span>
             </label>
           </div>
