@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, ChangeEvent, KeyboardEvent } from "react";
 import { Doc, Message } from './types.tsx';
 import * as api from "./api";
+import ReactMarkdown from "react-markdown";
 
 interface ChatPageProps {
   docs: Doc[];
@@ -74,15 +75,12 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
       const data = await response.json();
       
       // Format sources properly
-      const sources = data.sources.map((source: any) => {
-        // Try to get the filename from source field
-        if (source.source) {
-          // Extract just the filename from the path if needed
-          const filename = source.source.split('\\').pop()?.split('/').pop() || source.source;
-          return filename;
-        }
-        return source.name || 'Document';
-      });
+      const sources = data.sources.map((source: any) => ({
+        source: source.source || source,
+        content_preview: source.content_preview || "",
+        confidence: source.confidence ?? null,
+        score: source.score ?? null,
+      }));
       
       const reply: Message = {
         id: Date.now() + 1,
@@ -261,6 +259,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
             </div>
           </div>
         )}
+        
 
         {messages.map((msg: Message) => (
           <div key={msg.id} className={`message ${msg.role} animate-in`}>
@@ -268,10 +267,22 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
               {msg.role === "assistant" ? "✦" : userName.charAt(0).toUpperCase()}
             </div>
             <div className="msg-content">
-              <div className="msg-bubble" style={{ whiteSpace: "pre-line" }}>
-                {msg.content}
+              <div className="msg-bubble">
+                <ReactMarkdown>{msg.content}</ReactMarkdown>
               </div>
-              
+              {msg.sources && msg.sources.length > 0 && (
+              <div className="source-chips">
+                {msg.sources.map((s: any, i: number) => {
+                  const sourceName = typeof s === "object" ? s.source : s;
+                  return (
+                    <div key={i} className="source-chip" title={s.content_preview || sourceName}>
+                      <span>📄</span>
+                      <span>{sourceName.split("/").pop() || sourceName}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
               <div className="msg-meta">{msg.time}</div>
             </div>
           </div>

@@ -8,11 +8,16 @@ export interface Doc {
   status: "ready" | "processing";
 }
 
+export interface Source {
+  source: string;
+  content_preview: string;
+}
+
 export interface Message {
   id: number;
   role: "user" | "assistant";
   content: string;
-  sources?: string[];
+  sources?: (string | Source)[];
   time: string;
 }
 

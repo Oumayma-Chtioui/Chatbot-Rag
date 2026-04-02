@@ -30,6 +30,9 @@ class ChatResponse(BaseModel):
     session_id: str
     context_used: bool = False
 
+class SourceItem(BaseModel):
+    source: str
+    content_preview: str
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(

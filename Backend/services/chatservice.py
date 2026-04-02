@@ -346,8 +346,13 @@ def generate_answer(question: str, user_id: str, session_id: str):
         # 1. Retrieve relevant document chunks
         embeddings = get_embeddings()
         db = FAISS.load_local(VECTOR_PATH, embeddings, allow_dangerous_deserialization=True)
-        retriever = db.as_retriever(search_kwargs={"k": 6})
-        docs = retriever.invoke(question)
+        docs_with_scores = db.similarity_search_with_score(question, k=6)
+        docs = [doc for doc, score in docs_with_scores]
+
+        if not docs:
+            return {"answer": "I couldn't find any relevant information in the documents.", "sources": []}
+
+        context = "\n\n".join(doc.page_content for doc in docs)
 
         if not docs:
             return {"answer": "I couldn't find any relevant information in the documents.", "sources": []}
@@ -401,12 +406,51 @@ Document context:
         save_message(session_id, user_id, "user", question)
         save_message(session_id, user_id, "assistant", answer)
 
-        sources = [{
-            "source": doc.metadata.get("source", "Unknown"),
-            "content_preview": doc.page_content[:100] + "..."
-        } for doc in docs]
+        # Get documents with scores instead of just documents
+        docs_with_scores = db.similarity_search_with_score(question, k=6)
 
-        return {"answer": answer, "sources": sources}
+        sources = []
+
+        def score_to_confidence(score: float) -> int:
+            # For all-MiniLM-L6-v2, L2 distances typically range:
+            # 0.0 - 0.5  = very high match (90-100%)
+            # 0.5 - 1.0  = high match (70-90%)
+            # 1.0 - 1.5  = medium match (40-70%)
+            # 1.5 - 2.0  = low match (0-40%)
+            if score < 0.5:
+                return min(100, round(100 - score * 20))
+            elif score < 1.0:
+                return round(90 - (score - 0.5) * 40)
+            elif score < 1.5:
+                return round(70 - (score - 1.0) * 60)
+            else:
+                return max(0, round(40 - (score - 1.5) * 80))
+        for doc, score in docs_with_scores:
+            confidence = score_to_confidence(score)
+            
+            sources.append({
+                "source": doc.metadata.get("source", "Unknown"),
+                "content_preview": doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content,
+                "confidence": confidence,
+                "score": round(float(score), 4)
+            })
+
+        # Sort by confidence descending
+        sources.sort(key=lambda x: x["confidence"], reverse=True)
+
+        # Deduplicate by source name, keep highest confidence
+        seen = {}
+        for s in sources:
+            name = s["source"]
+            if name not in seen or s["confidence"] > seen[name]["confidence"]:
+                seen[name] = s
+
+        sources = list(seen.values())
+
+        return {
+            "answer": answer,
+            "sources": sources
+        }
 
     except Exception as e:
         logger.error(f"❌ Error generating answer: {e}")
