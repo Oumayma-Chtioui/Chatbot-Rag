@@ -18,7 +18,9 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
   const [thinking, setThinking] = useState<boolean>(false);
   const [showDocUpload, setShowDocUpload] = useState<boolean>(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-
+  const [urlInput, setUrlInput] = useState<string>("");
+  const [uploading, setUploading] = useState<boolean>(false);
+  
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
@@ -138,6 +140,29 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
     }
     };
 
+  const handleUrlAdd = async (url: string): Promise<void> => {
+    if (!url.trim() || !onAddDocs) return;
+    setUploading(true);
+    try {
+      const result = await api.addUrlDocument(url, sessionId);
+      const newDoc: Doc = {
+        id: result.document.id,
+        name: result.document.name,
+        type: "url",
+        size: "Web page",
+        status: "ready",
+      };
+      onAddDocs([newDoc]);
+      setUrlInput("");
+      setShowDocUpload(false);
+    } catch (err: any) {
+      console.error("URL add failed:", err.message);
+      alert("Failed to add URL.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <>
       <div className="topbar">
@@ -193,6 +218,9 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                     <span>📄</span>
                     <span style={{ color: 'var(--text1)', flex: 1 }}>{doc.name}</span>
                     <span style={{ color: 'var(--text3)', fontSize: 11 }}>{doc.size}</span>
+                    {doc.max_page && (
+                      <span style={{ color: 'var(--text3)', fontSize: 11 }}>Pages: {doc.max_page}</span>
+                    )}
                     <span style={{
                       fontSize: 11,
                       padding: '2px 6px',
@@ -225,6 +253,27 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                 📂 Browse
               </span>
             </label>
+            {/* Add URL */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: 13, color: 'var(--text3)', whiteSpace: 'nowrap' }}>Add URL:</span>
+              <input
+                className="form-input"
+                placeholder="https://example.com"
+                value={urlInput}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleUrlAdd(urlInput)}
+                style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
+                disabled={uploading}
+              />
+              <button
+                className="btn-outline"
+                onClick={() => handleUrlAdd(urlInput)}
+                disabled={uploading || !urlInput.trim()}
+                style={{ fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
+              >
+                {uploading ? '⟳' : 'Load'}
+              </button>
+            </div>
             <button
               onClick={() => setShowDocUpload(false)}
               style={{
