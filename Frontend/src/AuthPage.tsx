@@ -47,7 +47,7 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("user", JSON.stringify({ name: data.name, email: data.email }));
 
-      onLogin(data.name);
+      onLogin(data.name, data.is_admin); // Pass admin flag to parent
     } catch (err) {
       setError("Could not connect to the server. Is the backend running?");
     } finally {

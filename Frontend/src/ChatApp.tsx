@@ -5,7 +5,7 @@ import AuthPage from './AuthPage.tsx'
 import ChatPage from './ChatPage.tsx'
 import Sidebar from './Sidebar.tsx'
 import UploadPage from './UploadPage.tsx'
-
+import AdminDashboard from './AdminDashboard.tsx';
 import * as api from './api'; 
 
 import { Session, Doc, Message } from './types.tsx';
@@ -46,8 +46,9 @@ export default function App() {
     setPendingSessionId(session_id);
   };
 
-  const handleLogin = async (name: string): Promise<void> => {
+  const handleLogin = async (name: string, adminFlag: boolean): Promise<void> => {
     setUserName(name);
+    setIsAdmin(adminFlag);
     setAuthed(true);
     setView('upload'); // Start at upload page after login
     initNewSession();
@@ -215,6 +216,14 @@ export default function App() {
   // Get current session data
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
+  const [isAdmin, setIsAdmin] = useState<boolean>(
+    JSON.parse(localStorage.getItem("user") || "{}").is_admin || false
+  );
+
+  const [showAdmin, setShowAdmin] = useState<boolean>(false);
+
+  
+
   return (
     <>
       {!authed ? (
@@ -238,8 +247,28 @@ export default function App() {
               onLogout={handleLogout}
               onDeleteSession={handleDeleteSession}
             />
+            
           </div>
           <div className="main-content">
+            {isAdmin && (
+            <button onClick={() => setShowAdmin(true)} style={{
+              background: "var(--accent)",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              padding: "8px 16px",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              margin: "8px"
+            }}>
+              ⚙️ Admin Dashboard
+            </button>
+          )}
+
+          {showAdmin && (
+            <AdminDashboard onClose={() => setShowAdmin(false)} />
+          )}
             {view === 'upload' ? (
               <UploadPage
                 docs={pendingDocs}
@@ -270,6 +299,7 @@ export default function App() {
                 No active session
               </div>
             )}
+            
           </div>
         </div>
       )}

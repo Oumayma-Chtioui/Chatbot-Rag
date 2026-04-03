@@ -9,6 +9,7 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+    is_admin: bool = False
 
 class SessionCreate(BaseModel):
     title: Optional[str] = "New chat"

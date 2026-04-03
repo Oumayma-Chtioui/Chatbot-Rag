@@ -398,3 +398,45 @@ export async function cancelDocumentProcessing(docId: string): Promise<any> {
   if (!res.ok) throw new Error("Failed to cancel");
   return await res.json();
 }
+
+// admin API functions:
+
+export async function getAdminStats(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/stats`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch stats");
+  return await res.json();
+}
+
+export async function getAdminUsers(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/users`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch users");
+  return await res.json();
+}
+
+export async function deleteAdminUser(userId: number): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
+    method: "DELETE", headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to delete user");
+  return await res.json();
+}
+
+export async function getAdminDocuments(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/documents`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch documents");
+  return await res.json();
+}
+
+export async function deleteAdminDocument(docId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/documents/${docId}`, {
+    method: "DELETE", headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to delete document");
+  return await res.json();
+}
+
+export async function getSystemHealth(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/system`, { headers: getHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch system health");
+  return await res.json();
+}

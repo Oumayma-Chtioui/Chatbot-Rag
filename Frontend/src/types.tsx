@@ -30,7 +30,7 @@ export interface Session {
 }
 
 export interface AuthPageProps {
-  onLogin: (name: string) => void;
+  onLogin: (name: string, adminFlag: boolean) => void | Promise<void>;
 }
 
 export interface SidebarProps {

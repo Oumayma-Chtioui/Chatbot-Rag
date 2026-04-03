@@ -175,7 +175,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setMaxPages(Number(e.target.value))}
                 disabled={uploading}
                 style={{
-                  background: "var(--bg2)",
+                  background: "#1e1e1e",
                   border: "1px solid var(--border)",
                   borderRadius: "var(--radius-sm)",
                   color: "var(--text)",

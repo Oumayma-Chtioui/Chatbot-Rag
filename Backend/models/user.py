@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
+from sqlalchemy import Boolean, Column, String, Integer, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -12,6 +12,7 @@ class UserModel(Base):
     hashed_password = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     sessions = relationship("ChatSessionModel", back_populates="user", cascade="all, delete")
+    is_admin = Column(Boolean, default=False)
 
 class ChatSessionModel(Base):
     __tablename__ = "chat_sessions"

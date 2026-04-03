@@ -20,7 +20,8 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
   const bottomRef = useRef<HTMLDivElement>(null);
   const [urlInput, setUrlInput] = useState<string>("");
   const [uploading, setUploading] = useState<boolean>(false);
-  
+  const [maxPages, setMaxPages] = useState<number>();
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
@@ -140,11 +141,11 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
     }
     };
 
-  const handleUrlAdd = async (url: string): Promise<void> => {
+  const handleUrlAdd = async (url: string, maxPages: number): Promise<void> => {
     if (!url.trim() || !onAddDocs) return;
     setUploading(true);
     try {
-      const result = await api.addUrlDocument(url, sessionId);
+      const result = await api.addUrlDocument(url, sessionId, maxPages);
       const newDoc: Doc = {
         id: result.document.id,
         name: result.document.name,
@@ -162,6 +163,15 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
       setUploading(false);
     }
   };
+
+  const crawlOptions = [
+    { label: "Single page", value: 1 },
+    { label: "Small company site", value: 20 },
+    { label: "Documentation / Manual", value: 50 },
+    { label: "Knowledge base", value: 100 },
+    { label: "Large docs / Blog", value: 200 },
+    { label: "E-commerce / Large site", value: 500 },
+  ];
 
   return (
     <>
@@ -218,9 +228,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                     <span>📄</span>
                     <span style={{ color: 'var(--text1)', flex: 1 }}>{doc.name}</span>
                     <span style={{ color: 'var(--text3)', fontSize: 11 }}>{doc.size}</span>
-                    {doc.max_page && (
-                      <span style={{ color: 'var(--text3)', fontSize: 11 }}>Pages: {doc.max_page}</span>
-                    )}
+                    
                     <span style={{
                       fontSize: 11,
                       padding: '2px 6px',
@@ -261,13 +269,39 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                 placeholder="https://example.com"
                 value={urlInput}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setUrlInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleUrlAdd(urlInput)}
+                onKeyDown={(e) => e.key === "Enter" && handleUrlAdd(urlInput, maxPages )}
                 style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
                 disabled={uploading}
               />
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: 12, color: "var(--text3)", whiteSpace: "nowrap" }}>
+                Crawl depth:
+              </span>
+              <select
+                value={maxPages}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setMaxPages(Number(e.target.value))}
+                disabled={uploading}
+                style={{
+                  background: "#1e1e1e",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                  padding: "6px 10px",
+                  cursor: "pointer",
+                  flex: 1,
+                }}
+              >
+                {crawlOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label} ({opt.value === 1 ? "1 page" : `up to ${opt.value} pages`})
+                  </option>
+                ))}
+              </select>
+            </div>
               <button
                 className="btn-outline"
-                onClick={() => handleUrlAdd(urlInput)}
+                onClick={() => handleUrlAdd(urlInput, maxPages)}
                 disabled={uploading || !urlInput.trim()}
                 style={{ fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
               >
