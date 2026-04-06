@@ -29,20 +29,44 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
     { label: "E-commerce / Large site", value: 500 },
   ];
 
+  const isValidUrl = (input: string): boolean => {
+    try {
+      const url = input.startsWith("http")
+        ? new URL(input)
+        : new URL("https://" + input);
+
+      // must have valid domain like example.com
+      return /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(url.hostname);
+    } catch {
+      return false;
+    }
+  };
+
   const handleAddUrl = async (url: string): Promise<void> => {
+    setUploadError(null);
+    if (!isValidUrl(url)) {
+      setUploadError("Please enter a valid URL.");
+      return;
+    }
+    const normalized = url.startsWith("http")
+      ? url
+      : "https://" + url;
       const tempId = `temp-${Date.now()}`;
       setUploading(true);    
       // Add temp doc immediately so user sees feedback
       setDocs((d: Doc[]) => [...d, {
         id: tempId,
-        name: url,
+        name: normalized,
         type: "url",
         size: "Web page",
         status: "processing",
       }]);
       try {
-      const result = await api.addUrlDocument(url, sessionId, maxPages);
-      setDocs((d: Doc[]) =>
+      const result = await api.addUrlDocument(normalized, sessionId, maxPages);
+      if (!result || !result.document) {
+        throw new Error("Invalid response from server");
+      }
+      setDocs((d: Doc[]=[]) =>
         d.map((doc: Doc) =>
           doc.id === tempId
             ? {
@@ -56,10 +80,12 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
         )
       );
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ URL upload error:', error);
       setDocs((d: Doc[]) => d.filter((doc: Doc) => doc.id !== tempId));
-      alert('Failed to add URL. Please try again.');
+      // alert('Failed to add URL. Please try again.');
+      const msg = error.response?.data?.detail || "Failed to load URL. Please try another one.";
+      setUploadError("Failed to add URL. Please check the URL and try again.");
     } finally {
       setUploading(false);
     }
@@ -81,21 +107,36 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   };
 
   const handleFileDrop = async (file: File) => {
-  try {
-    const result = await uploadDocument(file, sessionId);
-    
-    
-    const newDoc: Doc = {
-      id: result.document.id,
-      name: result.document.name,
+    setUploadError(null);
+    const tempId = `temp-${Date.now()}`;
+
+    setDocs((d) => [...d, {
+      id: tempId,
+      name: file.name,
       type: "pdf",
       size: `${(file.size / 1024).toFixed(0)} KB`,
-      status: "ready",
-    };
-
-    setDocs((d) => [...d, newDoc]);
+      status: "processing",
+    }]);
+    setUploading(true);
+  try {
+    const result = await uploadDocument(file, sessionId);
+    setDocs((d) => d.map((doc) =>
+      doc.id === tempId
+        ? {
+            id: result.document.id,
+            name: result.document.name,
+            type: "pdf",
+            size: `${(file.size / 1024).toFixed(0)} KB`,
+            status: "ready",
+          }
+        : doc
+    ));
   } catch (err: any) {
-    console.error(err.message);
+    setDocs((d) => d.filter((doc) => doc.id !== tempId));
+    const msg = err.response?.data?.detail || "Failed to upload file (File too large).";
+    setUploadError(msg);
+  } finally {
+    setUploading(false);
   }
 };
 
@@ -112,6 +153,10 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   ];
 
   const allDocsReady = docs.length > 0 && docs.every(doc => doc.status === "ready");
+
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+
 
   return (
     <>
@@ -226,7 +271,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
                 }}
                 disabled={uploading || !sessionId} // ✅ disable until sessionId ready
               />
-              <span>{uploading ? 'Uploading...' : 'Load URL'}</span>
+              <span>{uploading ? 'Uploading...' : 'Load Document'}</span>
               
               <span className="btn-outline">📂 Browse files</span>
             </label>
@@ -264,7 +309,11 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
             ))}
           </div>
         )}
-
+        {uploadError && (
+          <div className="upload-error">
+            ⚠️ {uploadError}
+          </div>
+        )}
         {/* Start Chat Button */}
         {docs.length > 0 && (
           <div style={{ 

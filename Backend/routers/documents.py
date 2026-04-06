@@ -60,12 +60,29 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
     temp_filename = f"temp_{doc_id}{file_extension}"
     temp_path = os.path.join(UPLOAD_DIR, temp_filename)
     
+    ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
+    if file_extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{file_extension}'. Allowed: .pdf, .txt, .md, .docx"
+        )
+
+    # Validate file size (50MB max)
+    MAX_FILE_SIZE = 50 * 1024 
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum allowed size is 50MB."
+        )
+    await file.seek(0)
+
     try:
         # Save the uploaded file
+        
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         logger.info(f"✅ File saved to: {temp_path}")
-        
         # Get file size
         file_size = os.path.getsize(temp_path)
 
@@ -83,6 +100,8 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
             max_pages=0,
             doc_id=doc_id
         )
+
+        
         
         # Create document record for MongoDB
         doc_record = {
@@ -199,33 +218,33 @@ async def add_url_document(
             max_pages=req.max_pages,
             doc_id=doc_id
         )
-
-        doc = {
-            "id": doc_id,
-            "user_id": current_user.id,
-            "session_id": session_id,
-            "name": req.url,
-            "type": "url",
-            "size": "Web page",
-            "path": req.url,
-            "status": "indexed" if process_result.get("success") else "failed",
-            "chunks": process_result.get("chunks", 0),
-            "created_at": datetime.utcnow().isoformat(),
-        }
-
-        documents_collection.insert_one({**doc, "_id": doc_id})
-        logger.info(f"✅ URL document indexed: {req.url}")
-
-        return {
-            "document": {
+        if process_result.get("success"):
+            doc = {
                 "id": doc_id,
+                "user_id": current_user.id,
+                "session_id": session_id,
                 "name": req.url,
                 "type": "url",
                 "size": "Web page",
-                "status": doc["status"],
+                "path": req.url,
+                "status": "indexed" if process_result.get("success") else "failed",
                 "chunks": process_result.get("chunks", 0),
-                "session_id": session_id,
+                "created_at": datetime.utcnow().isoformat(),
             }
+
+            documents_collection.insert_one({**doc, "_id": doc_id})
+            logger.info(f"✅ URL document indexed: {req.url}")
+
+            return {
+                "document": {
+                    "id": doc_id,
+                    "name": req.url,
+                    "type": "url",
+                    "size": "Web page",
+                    "status": doc["status"],
+                    "chunks": process_result.get("chunks", 0),
+                    "session_id": session_id,
+                }
         }
 
     except Exception as e:

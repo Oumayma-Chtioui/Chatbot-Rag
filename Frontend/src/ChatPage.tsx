@@ -118,47 +118,74 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
     }
   };
 
-  const handleFileAdd = async (file: File): Promise<void> => {
-    if (!onAddDocs) return;
+    const handleFileAdd = async (file: File): Promise<void> => {
+      if (!onAddDocs) return;
+      setUploading(true);
+      setUrlError(null);
+      try {
+        const result = await api.uploadDocument(file, sessionId);
+        onAddDocs([{
+          id: result.document.id,
+          name: result.document.name || file.name,
+          type: "pdf",
+          size: `${(file.size / 1024).toFixed(0)} KB`,
+          status: "ready",
+        }]);
+        setShowDocUpload(false);
+      } catch (err: any) {
+        const msg = err.response?.data?.detail || "Failed to upload file.";
+        setUrlError(msg);
+      } finally {
+        setUploading(false);
+      }
+    };
+    const isValidUrl = (input: string): boolean => {
+      try {
+        const url = input.startsWith("http")
+          ? new URL(input)
+          : new URL("https://" + input);
 
-    try {
-      // 🔥 Upload to backend
-      const result = await api.uploadDocument(file, sessionId);
-
-      const newDoc: Doc = {
-        id: result.document.id,   // Now result exists
-        name: result.document.name || file.name,
-        type: "pdf",
-        size: `${(file.size / 1024).toFixed(0)} KB`,
-        status: "ready",
-      };
-
-      onAddDocs([newDoc]);
-      setShowDocUpload(false);
-
-    } catch (err: any) {
-      console.error("Upload failed:", err.message);
-    }
+        return /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(url.hostname);
+      } catch {
+        return false;
+      }
     };
 
+  const [urlError, setUrlError] = useState<string | null>(null);
+
   const handleUrlAdd = async (url: string, maxPages: number): Promise<void> => {
-    if (!url.trim() || !onAddDocs) return;
+    if (!onAddDocs) return;
+    setUrlError(null);
     setUploading(true);
+    if (!isValidUrl(url)) {
+      setUrlError("Please enter a valid URL. (e.g. example.com)");
+      return;
+    }
+    
+  const normalized = url.startsWith("http") ? url : "https://" + url;
+  const tempId = `temp-${Date.now()}`;
+
+
     try {
-      const result = await api.addUrlDocument(url, sessionId, maxPages);
-      const newDoc: Doc = {
+      const result = await api.addUrlDocument(normalized, sessionId, maxPages);
+      if (!result || !result.document) {
+        throw new Error("Invalid response from server (Invalid URL or server error)");
+      }
+      onAddDocs([{
         id: result.document.id,
         name: result.document.name,
         type: "url",
         size: "Web page",
         status: "ready",
-      };
-      onAddDocs([newDoc]);
+        _replaceTempId: tempId,
+      } as any]);
       setUrlInput("");
       setShowDocUpload(false);
     } catch (err: any) {
+      onAddDocs([{ id: tempId, _remove: true } as any]);
       console.error("URL add failed:", err.message);
-      alert("Failed to add URL.");
+      const msg = err.response?.data?.detail || err.message || "Failed to load URL.";
+      setUrlError(msg);
     } finally {
       setUploading(false);
     }
@@ -258,7 +285,7 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                 }}
               />
               <span className="btn-outline" style={{ fontSize: 12, padding: '6px 12px' }}>
-                📂 Browse
+                {uploading ? '⟳ Uploading...' : '📂 Browse'}
               </span>
             </label>
             {/* Add URL */}
@@ -269,7 +296,6 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
                 placeholder="https://example.com"
                 value={urlInput}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setUrlInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleUrlAdd(urlInput, maxPages )}
                 style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
                 disabled={uploading}
               />
@@ -301,11 +327,12 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
             </div>
               <button
                 className="btn-outline"
-                onClick={() => handleUrlAdd(urlInput, maxPages)}
-                disabled={uploading || !urlInput.trim()}
+                onClick={() => handleUrlAdd(urlInput, maxPages || 1)}
+                disabled={uploading || !urlInput.trim() }
                 style={{ fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
+                
               >
-                {uploading ? '⟳' : 'Load'}
+                {uploading ? '⟳ Processing...' : 'Load'}
               </button>
             </div>
             <button
@@ -322,6 +349,14 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
               ✕
             </button>
           </div>
+          <div>
+            {urlError && (
+                <div style={{ color: "red", fontSize: 12 }}>
+                  ⚠️ {urlError}
+                </div>
+              )}
+          </div>
+          
         </div>
       )}
 

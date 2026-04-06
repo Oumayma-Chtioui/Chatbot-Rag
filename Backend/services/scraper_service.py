@@ -71,10 +71,12 @@ def scrape_url(url: str, doc_id: str = None, cancellation_registry: dict = None)
             
             if rendered_html:
                 content = trafilatura.extract(rendered_html)
+                if not content:
+                 raise ValueError(f"No content extracted from: {url}")
                 return [Document(page_content=content, metadata={"source": url})]
             
             return []
-        
+            
         logger.info(f"📥 Downloaded {len(downloaded)} bytes from {url}")
         
         # Check cancellation after download
@@ -103,7 +105,7 @@ def scrape_url(url: str, doc_id: str = None, cancellation_registry: dict = None)
         
         if not content:
             logger.warning(f"⚠️ No content extracted from {url}")
-            return []
+            raise ValueError(f"No content extracted from: {url}")
         
         logger.info(f"✅ Extracted {len(content)} characters from {url}")
         
@@ -111,7 +113,7 @@ def scrape_url(url: str, doc_id: str = None, cancellation_registry: dict = None)
         
     except Exception as e:
         logger.error(f"❌ Error scraping {url}: {e}")
-        return []
+        raise ValueError(f"Failed to scrape URL: {url}")
 
 
 def crawl_website(url: str, max_pages: int, doc_id: str = None, cancellation_registry: dict = None) -> list:

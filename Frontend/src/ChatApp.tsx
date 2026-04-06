@@ -202,17 +202,30 @@ export default function App() {
 
   // Add more documents to current chat session
   const handleAddDocsToSession = (newDocs: Doc[]): void => {
-    if (!activeSessionId) return;
+  if (!activeSessionId) return;
 
-    setSessions((prev) =>
-      prev.map((session) =>
-        session.id === activeSessionId
-          ? { ...session, docs: [...session.docs, ...newDocs] }
-          : session
-      )
-    );
-  };
+  setSessions((prev) =>
+    prev.map((session) => {
+      if (session.id !== activeSessionId) return session;
 
+      let updated = [...session.docs];
+      for (const doc of newDocs) {
+        const d = doc as any;
+        if (d._remove) {
+          updated = updated.filter(x => x.id !== d.id);
+        } else if (d._replaceTempId) {
+          updated = updated.map(x =>
+            x.id === d._replaceTempId ? { ...doc, _replaceTempId: undefined } : x
+          );
+        } else {
+          updated = [...updated, doc];
+        }
+      }
+
+      return { ...session, docs: updated };
+    })
+  );
+};
   // Get current session data
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
