@@ -32,3 +32,5 @@ requests
 beautifulsoup4
 trafilatura
 playwright
+
+nest-asyncio

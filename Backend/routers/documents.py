@@ -11,7 +11,7 @@ from models.user import UserModel
 from schemas.schemas import AssignSessionRequest, UrlDocRequest
 from auth.helpers import get_current_user
 from config import UPLOAD_DIR
-from services.rag_services import process_document 
+from services.rag_services import load_document, load_url
 
 import logging
 
@@ -68,7 +68,7 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
         )
 
     # Validate file size (50MB max)
-    MAX_FILE_SIZE = 50 * 1024 
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -92,7 +92,7 @@ async def upload_document(file: UploadFile = File(...), session_id: Optional[str
             session_id = f"session_{uuid.uuid4()}"
             logger.info(f"🆕 No session_id provided, generated: {session_id}")
 
-        process_result = await process_document(
+        process_result = await load_document(
             file,
             file_path=temp_path,
             user_id=current_user.id,
@@ -210,7 +210,7 @@ async def add_url_document(
     logger.info(f"🔗 Processing URL: {req.url}")
 
     try:
-        process_result = await process_document(
+        process_result = await load_url(
             file=None,
             file_path=req.url,
             user_id=current_user.id,

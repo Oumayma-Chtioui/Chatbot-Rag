@@ -14,7 +14,47 @@ from fastapi import HTTPException
 def is_cancelled(doc_id):
     return doc_id and cancellation_registry.get(doc_id, False) 
 
-async def process_document(file, file_path, user_id, session_id, max_pages, doc_id=None):
+
+# Detect URL function
+import re
+
+def is_url(input_str: str) -> bool:
+    return "." in input_str and " " not in input_str
+
+# ================= LOAD =================
+async def load_url(file, file_path, user_id, session_id, max_pages, doc_id=None):
+    from services.scraper_service import scrape_url, scrape_website
+    if not file_path.startswith(("http://", "https://")):
+            file_path = "https://" + file_path
+    logger.info(f"🌐 Detected URL: {file_path}")
+    try:
+        documents = scrape_url(file_path,doc_id=doc_id) if max_pages == 1 else scrape_website(file_path, max_pages,max_workers=7, doc_id=doc_id)
+        return await process_document(documents=documents, file=file, file_path=file_path, user_id=user_id, session_id=session_id, max_pages=max_pages, doc_id=doc_id)
+    except Exception as e:
+        logger.error(f"❌ Failed to scrape URL: {e}")
+        return {"success": False, "error": str(e), "chunks": 0}
+
+async def load_document(file, file_path, user_id, session_id, max_pages, doc_id=None):
+    if file and file.filename.endswith('.pdf'):
+        logger.info(f"📄 Detected PDF file: {file.filename}")
+        documents = PyPDFLoader(file_path).load()
+        return await process_document(documents=documents, file=file, file_path=file_path, user_id=user_id, session_id=session_id, max_pages=max_pages, doc_id=doc_id)
+
+    elif file and file.filename.endswith(('.txt', '.md')):
+        logger.info(f"📝 Detected text file: {file.filename}")
+        documents = TextLoader(file_path, encoding='utf-8').load()
+        return await process_document(documents=documents, file=file, file_path=file_path, user_id=user_id, session_id=session_id, max_pages=max_pages, doc_id=doc_id)
+
+    elif file and file.filename.endswith('.docx'):
+        logger.info(f"📑 Detected Word file: {file.filename}")
+        documents = Docx2txtLoader(file_path).load()
+        return await process_document(documents=documents, file=file, file_path=file_path, user_id=user_id, session_id=session_id, max_pages=max_pages, doc_id=doc_id)
+   
+    else:
+        logger.warning(f"⚠️  Unsupported file type or invalid URL: {file_path}")
+        return {"success": False, "error": "Unsupported file type or invalid URL", "chunks": 0}
+
+async def process_document(documents, file, file_path, user_id, session_id, max_pages, doc_id=None):
     clean_session_id = session_id.replace("session_", "").replace("session-", "")
     
      
@@ -41,38 +81,7 @@ async def process_document(file, file_path, user_id, session_id, max_pages, doc_
         if is_cancelled(doc_id):
             return {"success": False, "error": "Cancelled early", "chunks": 0}
 
-        # Detect URL function
-        import re
-
-        def is_url(input_str: str) -> bool:
-            return "." in input_str and " " not in input_str
         
-        # ================= LOAD =================
-        if is_url(file_path):
-            if not file_path.startswith(("http://", "https://")):
-                file_path = "https://" + file_path
-            logger.info(f"🌐 Detected URL: {file_path}")
-            from services.scraper_service import scrape_website, scrape_url
-            try:
-                documents = scrape_url(file_path,doc_id=doc_id) if max_pages == 1 else scrape_website(file_path, max_pages,max_workers=7, doc_id=doc_id)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e))
-        elif file.filename.endswith('.pdf'):
-            logger.info(f"📄 Detected PDF file: {file.filename}")
-            documents = PyPDFLoader(file_path).load()
-
-        elif file.filename.endswith(('.txt', '.md')):
-            logger.info(f"📝 Detected text file: {file.filename}")
-            documents = TextLoader(file_path, encoding='utf-8').load()
-
-        elif file.filename.endswith('.docx'):
-            logger.info(f"📑 Detected Word file: {file.filename}")
-            documents = Docx2txtLoader(file_path).load()
-        
-            
-        elif not (is_url(file_path) or file.filename.endswith(('.pdf', '.txt', '.md', '.docx'))):
-            return {"success": False, "error": "Unsupported file type", "chunks": 0}
-
         if not documents:
             return {"success": False, "error": "No content extracted", "chunks": 0}
 
