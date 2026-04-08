@@ -6,8 +6,29 @@ import trafilatura
 from trafilatura.spider import focused_crawler
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import asyncio
+import nest_asyncio
+nest_asyncio.apply()
 
 logger = logging.getLogger(__name__)
+
+
+from bs4 import BeautifulSoup
+
+def extract_with_bs4(html: str) -> str:
+    """Fallback extraction using BeautifulSoup"""
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove useless tags
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    text = soup.get_text(separator=" ", strip=True)
+    return text
+
+
+def is_content_good(content: str | None, min_length: int = 200) -> bool:
+    """Check if extracted content is meaningful"""
+    return content is not None and len(content.strip()) >= min_length
 
 
 async def render_with_playwright_async(url: str) -> str | None:
@@ -22,8 +43,8 @@ async def render_with_playwright_async(url: str) -> str | None:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
             })
             # Set timeout and wait for network idle
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(2000)  # wait 2 seconds
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(1000)  # wait 1 second
             content = await page.content()
             await browser.close()
             
@@ -64,18 +85,34 @@ def scrape_url(url: str, doc_id: str = None, cancellation_registry: dict = None)
     try:
         logger.info(f"🔍 Fetching URL: {url}")
         downloaded = trafilatura.fetch_url(url)
+        content = None
+        if downloaded:
+            content = trafilatura.extract(downloaded)
         
-        if not downloaded:
-            logger.warning(f"⚠️ Falling back to Playwright (download failed): {url}")
+        # 2. If weak → Playwright
+        if not is_content_good(content):
             rendered_html = render_with_playwright_sync(url)
-            
+
             if rendered_html:
-                content = trafilatura.extract(rendered_html)
-                if not content:
-                 raise ValueError(f"No content extracted from: {url}")
+                content = trafilatura.extract(rendered_html, favor_recall=True)
+
+                # 3. BS4 fallback
+                if not is_content_good(content):
+                    content = extract_with_bs4(rendered_html)
+
+                # 4. Raw fallback
+                if not is_content_good(content):
+                    content = rendered_html[:5000]  # Limit to first 5000 chars
+                else:
+                            logger.warning(f"⚠️ Playwright failed, trying BS4 on original HTML")
+                            content = extract_with_bs4(downloaded)
+
+                # FINAL CHECK
+                if not is_content_good(content) or "ak.v" in content:
+                    raise ValueError(f"No meaningful content extracted from: {url}")
                 return [Document(page_content=content, metadata={"source": url})]
-            
-            return []
+                            
+            raise ValueError(f"Failed to scrape URL: {url}")
             
         logger.info(f"📥 Downloaded {len(downloaded)} bytes from {url}")
         
@@ -87,7 +124,7 @@ def scrape_url(url: str, doc_id: str = None, cancellation_registry: dict = None)
         content = trafilatura.extract(downloaded)
         
         # If no content or very little, try Playwright fallback
-        if not content or len(content) < 100:
+        if not is_content_good(content):
             logger.warning(f"⚠️ Falling back to Playwright for: {url}")
             
             # Check cancellation before expensive Playwright operation
