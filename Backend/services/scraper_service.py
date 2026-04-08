@@ -165,14 +165,15 @@ def crawl_website(url: str, max_pages: int, doc_id: str = None, cancellation_reg
         return []
     
     try:
-        to_visit, known_links = focused_crawler(url, max_seen_urls=max_pages)
+        to_visit, known_links = focused_crawler(url, max_seen_urls=max_pages,
+                                                max_known_urls=max_pages * 2)  # controls discovery pool)
         
         # Check cancellation after crawling
         if doc_id and cancellation_registry and cancellation_registry.get(doc_id, False):
             logger.info("🛑 Crawl cancelled after discovery")
             return []
         
-        all_links = list(known_links)
+        all_links = list(known_links)[:max_pages]
         logger.info(f"✅ Found {len(all_links)} pages to scrape")
         return all_links
         
