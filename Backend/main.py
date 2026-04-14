@@ -1,29 +1,52 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import Base, engine
-from models.user import UserModel, ChatSessionModel, MessageModel  # register models
-from routers import admin, auth, sessions, documents, chat
+from fastapi.staticfiles import StaticFiles
 
-# Create all PostgreSQL tables
+from database import Base, engine
+from models.user import UserModel, ChatSessionModel, MessageModel
+from models.widget import WidgetBot, WidgetApiKey
+
+from routers import admin, auth, sessions, documents, chat
+from routers.widgets import router as widgets_router
+from routers.widget_chat import router as widget_chat_router
+from routers.widget_chat import limiter
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Create all PostgreSQL tables (includes widget tables now)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Chatbot-RAG API")
 
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Single CORS middleware — allows both your frontend and widget origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r".*",   # widget requests can come from any site
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-Api-Key"],
 )
 
-# Register routers
+# Existing routers
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 
+# Widget routers
+app.include_router(widgets_router)
+app.include_router(widget_chat_router)
+
+# Static files (serves widget.js)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def root():

@@ -324,13 +324,16 @@ Reformulated question (keep proper nouns unchanged):"""
 # ─────────────────────────────────────────────────────────────
 # Main RAG + Memory answer generation
 # ─────────────────────────────────────────────────────────────
-def generate_answer(question: str, user_id: str, session_id: str):
+def generate_answer(question: str, user_id: str, session_id: str, memory_session_id: str):
 
     # question = reformulate_query(question)
 
     logger.info(f"🔍 Generating answer for: {question[:50]}...")
 
+    memory_session_id = memory_session_id or session_id
+
     clean_session_id = session_id.replace("session_", "").replace("session-", "")
+    clean_memory_id = memory_session_id.replace("session_", "").replace("session-", "").replace("widget_", "widget-")
     VECTOR_PATH = get_vector_path(user_id, clean_session_id)
 
     logger.warning(f"🔎 VECTOR_PATH looking for: '{VECTOR_PATH}'")

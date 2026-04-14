@@ -129,11 +129,15 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
         BATCH_SIZE = 32
         all_batches = [chunks[i:i+BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
 
-        db = None
+        # ✅ Load existing index if it exists, otherwise start fresh
+        if os.path.exists(faiss_index_path):
+            logger.info(f"📂 Loading existing index to merge into")
+            db = FAISS.load_local(VECTOR_PATH, embeddings, allow_dangerous_deserialization=True)
+        else:
+            db = None
 
         for i, batch in enumerate(all_batches):
             if is_cancelled(doc_id):
-                logger.info(f"🛑 Cancelled during embeddings at batch {i}")
                 return {"success": False, "error": "Cancelled during embeddings", "chunks": 0}
 
             if db is None:
