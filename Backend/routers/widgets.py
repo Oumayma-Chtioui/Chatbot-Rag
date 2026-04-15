@@ -280,6 +280,65 @@ def get_bot_analytics(
         "top_questions": []
     }
 
+class BotFeedbackRequest(BaseModel):
+    rating: int
+    comment: Optional[str] = None
+    category: str
+
+
+@router.post("/bots/{bot_id}/feedback")
+def create_bot_feedback(
+    bot_id: str,
+    req: BotFeedbackRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    if req.rating < 1 or req.rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+
+    allowed_categories = {"Accuracy", "Speed", "Relevance", "Missing Info"}
+    if req.category not in allowed_categories:
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    feedback_col = mongodb["widget_feedback"]
+    feedback_data = {
+        "id": str(uuid.uuid4()),
+        "bot_id": bot_id,
+        "user_id": current_user.id,
+        "user_name": current_user.name,
+        "rating": req.rating,
+        "comment": req.comment or "",
+        "category": req.category,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    feedback_col.insert_one(feedback_data)
+    return {"ok": True, "feedback": feedback_data}
+
+
+@router.get("/bots/{bot_id}/feedback")
+def list_bot_feedback(
+    bot_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    feedback_col = mongodb["widget_feedback"]
+    feedbacks = list(feedback_col.find({"bot_id": bot_id}, {"_id": 0}).sort("created_at", -1))
+    avg_score = round(sum(item.get("rating", 0) for item in feedbacks) / len(feedbacks), 2) if feedbacks else 0.0
+    return {
+        "feedback": feedbacks,
+        "avg_score": avg_score,
+        "total_feedback": len(feedbacks),
+    }
+
+
 @router.patch("/bots/{bot_id}")
 def update_bot(
     bot_id: str,
