@@ -17,6 +17,22 @@ function getHeaders(): HeadersInit {
   };
 }
 
+function getAdminHeaders(): HeadersInit {
+  const adminToken = localStorage.getItem("admin_token");
+  return {
+    "Content-Type": "application/json",
+    ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+  };
+}
+
+function getClientHeaders(): HeadersInit {
+  const clientToken = localStorage.getItem("client_token");
+  return {
+    "Content-Type": "application/json",
+    ...(clientToken ? { Authorization: `Bearer ${clientToken}` } : {}),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth APIs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -402,48 +418,91 @@ export async function cancelDocumentProcessing(docId: string): Promise<any> {
 // admin API functions:
 
 export async function getAdminStats(): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/stats`, { headers: getHeaders() });
+  const res = await fetch(`${API_BASE}/admin/stats`, { headers: getAdminHeaders() });
   if (!res.ok) throw new Error("Failed to fetch stats");
   return await res.json();
 }
 
 export async function getAdminUsers(): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/users`, { headers: getHeaders() });
+  const res = await fetch(`${API_BASE}/admin/users`, { headers: getAdminHeaders() });
   if (!res.ok) throw new Error("Failed to fetch users");
   return await res.json();
 }
 
 export async function deleteAdminUser(userId: number): Promise<any> {
   const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
-    method: "DELETE", headers: getHeaders()
+    method: "DELETE", headers: getAdminHeaders()
   });
   if (!res.ok) throw new Error("Failed to delete user");
   return await res.json();
 }
 
 export async function getAdminDocuments(): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/documents`, { headers: getHeaders() });
+  const res = await fetch(`${API_BASE}/admin/documents`, { headers: getAdminHeaders() });
   if (!res.ok) throw new Error("Failed to fetch documents");
   return await res.json();
 }
 
 export async function deleteAdminDocument(docId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/admin/documents/${docId}`, {
-    method: "DELETE", headers: getHeaders()
+    method: "DELETE", headers: getAdminHeaders()
   });
   if (!res.ok) throw new Error("Failed to delete document");
   return await res.json();
 }
 
+export async function adminLogin(email: string, password: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || "Admin login failed");
+  }
+  return await res.json();
+}
+
 export async function getSystemHealth(): Promise<any> {
-  const res = await fetch(`${API_BASE}/admin/system`, { headers: getHeaders() });
+  const res = await fetch(`${API_BASE}/admin/system`, { headers: getAdminHeaders() });
   if (!res.ok) throw new Error("Failed to fetch system health");
+  return await res.json();
+}
+
+export async function getAdminBilling(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/billing`, { headers: getAdminHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch billing data");
+  return await res.json();
+}
+
+export async function getAdminBots(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/bots`, { headers: getAdminHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch bots");
+  return await res.json();
+}
+
+export async function getAdminPreviewKey(botId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/bots/${botId}/preview-key`, {
+    method: "POST",
+    headers: getAdminHeaders(),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || "Failed to create preview key");
+  }
+  return await res.json();
+}
+
+export async function getAdminFeedback(): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/feedback`, { headers: getAdminHeaders() });
+  if (!res.ok) throw new Error("Failed to fetch admin feedback");
   return await res.json();
 }
 
 export async function getAdvancedAnalytics(botId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/widgets/bots/${botId}/analytics/advanced`, {
-    headers: getHeaders(),
+    headers: getClientHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch analytics");
   return await res.json();
@@ -464,5 +523,14 @@ export async function respondToTicket(ticketId: string, answer: string): Promise
     body: JSON.stringify({ answer }),
   });
   if (!res.ok) throw new Error("Failed to respond to ticket");
+  return await res.json();
+}
+
+export async function deleteBot(botId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/bots/${botId}`, {
+    method: "DELETE",
+    headers: getAdminHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to delete bot");
   return await res.json();
 }

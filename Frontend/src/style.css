@@ -227,6 +227,7 @@ z-index: 10;
     .auth-page { grid-template-columns: 1fr; }
     .auth-left { display: none; }
     .app-layout { grid-template-columns: 1fr; }
+    .main-content { min-height: 100vh; }
     .sidebar { display: none; position: fixed; left: 0; top: 0; bottom: 0; width: 280px; z-index: 20; }
     .sidebar.open { display: flex; }
     .hamburger { display: flex; }

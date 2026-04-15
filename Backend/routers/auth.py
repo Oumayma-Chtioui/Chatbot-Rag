@@ -29,6 +29,14 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     token = create_token({"sub": user.email, "name": user.name})
     return {"access_token": token, "token_type": "bearer", "name": user.name, "email": user.email, "is_admin": user.is_admin}
 
+@router.post("/admin/auth/login")
+def admin_login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.email == req.email, UserModel.is_admin == True).first()
+    if not user or not verify_password(req.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    token = create_token({"sub": user.email, "name": user.name, "role": "admin"})
+    return {"access_token": token, "token_type": "bearer", "name": user.name, "email": user.email, "is_admin": True}
+
 @router.get("/me")
 def get_me(current_user: UserModel = Depends(get_current_user)):
     return {"id": current_user.id, "name": current_user.name, "email": current_user.email, "is_admin": current_user.is_admin}
