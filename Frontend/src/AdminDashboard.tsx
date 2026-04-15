@@ -58,41 +58,58 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   });
 
   return (
-    <div style={{
+    <div className="admin-modal" style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
       zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center"
     }}>
-      <div style={{
-        background: "#ffffff", borderRadius: 16, width: "90%", maxWidth: 900,
-        maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column"
+      <div className="admin-modal-dialog" style={{
+        background: "var(--bg)", color: "var(--text)", borderRadius: 16, width: "95%", maxWidth: 1200,
+        maxHeight: "95vh", overflow: "hidden"
       }}>
-        {/* Header */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "20px 24px", borderBottom: "1px solid var(--border)"
+        {/* Sidebar */}
+        <div className="admin-modal-sidebar" style={{
+          background: "var(--bg2)", borderRight: "1px solid var(--border)",
+          display: "flex", flexDirection: "column", padding: "20px 0"
         }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text3)" }}>
-            ⚙️ Admin Dashboard
+          <div style={{ padding: "0 16px", marginBottom: 24 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>⚙️ Admin</div>
           </div>
-          <button onClick={onClose} style={{
-            background: "none", border: "none", fontSize: 20,
-            cursor: "pointer", color: "var(--text3)"
-          }}>✕</button>
-        </div>
-
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 8, padding: "16px 24px", borderBottom: "1px solid var(--border)" }}>
-          {["stats", "users", "documents", "system"].map(t => (
-            <button key={t} style={tabStyle(t)} onClick={() => setTab(t as any)}>
-              {t === "stats" ? "📊 Statistics" :
-               t === "users" ? "👥 Users" :
-               t === "documents" ? "📄 Documents" : "🖥️ System"}
-            </button>
-          ))}
+          <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+            {["stats", "users", "documents", "system"].map(t => {
+              const isActive = tab === t;
+              return (
+                <button
+                  key={t}
+                  onClick={() => setTab(t as any)}
+                  style={{
+                    background: isActive ? "rgba(127,119,221,0.15)" : "none",
+                    border: "none", color: isActive ? "var(--accent)" : "var(--text3)",
+                    padding: "10px 16px", textAlign: "left", cursor: "pointer",
+                    fontSize: 12, fontWeight: isActive ? 600 : 400, transition: "all 0.2s"
+                  }}
+                >
+                  {t === "stats" ? "📊 Statistics" :
+                   t === "users" ? "👥 Users" :
+                   t === "documents" ? "📄 Documents" : "🖥️ System"}
+                </button>
+              );
+            })}
+          </nav>
+          <div style={{ padding: "0 16px", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+            <button onClick={onClose} style={{
+              background: "none", border: "1px solid var(--border)", color: "var(--text3)",
+              padding: "8px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12, width: "100%"
+            }}>Close</button>
+          </div>
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+        <div className="admin-modal-panel" style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column" }}>
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+              {tab === "stats" ? "Statistics" : tab === "users" ? "Users" : tab === "documents" ? "Documents" : "System Health"}
+            </h2>
+          </div>
           {loading && <div style={{ color: "var(--text3)", textAlign: "center" }}>Loading...</div>}
 
           {/* Stats Tab */}

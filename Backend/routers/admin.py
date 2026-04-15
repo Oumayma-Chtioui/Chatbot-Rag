@@ -1,11 +1,14 @@
 import os
+import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from database import get_db, documents_collection, messages_collection
 from models.user import UserModel, ChatSessionModel, MessageModel
+from models.widget import WidgetBot, WidgetApiKey
 from auth.helpers import get_admin_user
+from auth.widget_auth import generate_api_key
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -96,6 +99,7 @@ def get_stats(
     total_sessions = db.query(ChatSessionModel).count()
     total_messages = db.query(MessageModel).count()
     total_documents = documents_collection.count_documents({})
+    total_bots = db.query(WidgetBot).count()
 
     # Messages per day (last 7 days)
     messages_per_day = []
@@ -125,6 +129,7 @@ def get_stats(
         "total_documents": total_documents,
         "active_sessions_24h": active_sessions,
         "messages_per_day": messages_per_day,
+        "total_bots": total_bots,
     }
 
 
@@ -183,3 +188,124 @@ def get_system_health(current_user: UserModel = Depends(get_admin_user)):
             "size_mb": round(upload_size_mb, 2),
         }
     }
+
+
+@router.get("/billing")
+def get_billing(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
+    users = db.query(UserModel).all()
+    results = []
+    for user in users:
+        bots = db.query(WidgetBot).filter_by(owner_id=user.id).all()
+        bot_ids = [bot.id for bot in bots]
+        messages_count = messages_collection.count_documents({"bot_id": {"$in": bot_ids}}) if bot_ids else 0
+        docs_count = documents_collection.count_documents({"user_id": {"$in": bot_ids}}) if bot_ids else 0
+        sessions_count = len(messages_collection.distinct("session_id", {"bot_id": {"$in": bot_ids}})) if bot_ids else 0
+        plan_tier = "Starter"
+        if messages_count > 5000 or docs_count > 50:
+            plan_tier = "Growth"
+        if messages_count > 20000 or docs_count > 200:
+            plan_tier = "Enterprise"
+
+        results.append({
+            "email": user.email,
+            "messages_count": messages_count,
+            "docs_count": docs_count,
+            "sessions_count": sessions_count,
+            "storage_mb": 0.0,
+            "plan_tier": plan_tier,
+        })
+    return {"clients": results}
+
+
+@router.get("/bots")
+def get_all_bots(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
+    bots = db.query(WidgetBot).filter_by(is_active=True).all()
+    bot_stats = []
+    for bot in bots:
+        doc_count = documents_collection.count_documents({"user_id": bot.id})
+        message_count = messages_collection.count_documents({"bot_id": bot.id})
+        owner = db.query(UserModel).filter_by(id=bot.owner_id).first()
+        bot_stats.append({
+            "id": bot.id,
+            "name": bot.name,
+            "status": "active" if bot.is_active else "inactive",
+            "doc_count": doc_count,
+            "message_count": message_count,
+            "allowed_origin": bot.allowed_origin,
+            "created_at": bot.created_at.isoformat() if bot.created_at else None,
+            "owner": {
+                "id": owner.id if owner else None,
+                "name": owner.name if owner else "Unknown",
+                "email": owner.email if owner else "Unknown",
+            } if owner else None,
+        })
+    return {"bots": bot_stats}
+
+
+@router.get("/feedback")
+def get_feedback_summary(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
+    feedback_col = documents_collection.database["widget_feedback"] if hasattr(documents_collection, 'database') else None
+    if feedback_col is None:
+        return {"feedback": []}
+
+    bot_feedback = {}
+    for item in feedback_col.find({}, {"_id": 0}):
+        bot_id = item.get("bot_id")
+        if not bot_id:
+            continue
+        entry = bot_feedback.setdefault(bot_id, {"bot_id": bot_id, "bot_name": "Unknown", "ratings": [], "total_feedback": 0})
+        entry["ratings"].append(item.get("rating", 0))
+        entry["total_feedback"] += 1
+
+    result = []
+    for bot_id, entry in bot_feedback.items():
+        bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+        result.append({
+            "bot_id": bot_id,
+            "bot_name": bot.name if bot else entry["bot_name"],
+            "avg_score": round(sum(entry["ratings"]) / len(entry["ratings"]), 2) if entry["ratings"] else 0.0,
+            "total_feedback": entry["total_feedback"],
+        })
+    return {"feedback": result}
+
+
+@router.post("/bots/{bot_id}/preview-key")
+def create_preview_key(
+    bot_id: str,
+    current_user: UserModel = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, is_active=True).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    raw_key, key_hash = generate_api_key()
+    api_key = WidgetApiKey(
+        id=str(uuid.uuid4()),
+        bot_id=bot_id,
+        key_hash=key_hash,
+        key_prefix=raw_key[:10],
+        is_active=True,
+    )
+    db.add(api_key)
+    db.commit()
+
+    return {
+        "key": raw_key,
+        "prefix": raw_key[:10],
+        "is_active": True,
+        "created_at": api_key.created_at,
+    }
+
+@router.delete("/bots/{bot_id}")
+def delete_bot(
+    bot_id: str,
+    current_user: UserModel = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    bot.is_active = False
+    db.commit()
+    return {"ok": True}
