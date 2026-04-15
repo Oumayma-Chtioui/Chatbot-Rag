@@ -1,8 +1,0 @@
-window.NovaMindConfig = {
-  apiKey: "nm_YOUR_KEY_HERE",
-  apiBase: "https://afloat-contusion-granular.ngrok-free.dev",
-  botName: "NovaMind",
-};
-const s = document.createElement("script");
-s.src = "https://afloat-contusion-granular.ngrok-free.dev/static/widget.js";
-document.body.appendChild(s);

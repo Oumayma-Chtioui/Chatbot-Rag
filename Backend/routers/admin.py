@@ -9,7 +9,8 @@ from models.user import UserModel, ChatSessionModel, MessageModel
 from models.widget import WidgetBot, WidgetApiKey
 from auth.helpers import get_admin_user
 from auth.widget_auth import generate_api_key
-
+from database import get_db, documents_collection, messages_collection, mongodb
+import shutil
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
@@ -44,10 +45,44 @@ def delete_user(
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # 1. Collect session IDs before deletion (needed for MongoDB cleanup)
+    sessions = db.query(ChatSessionModel).filter(
+        ChatSessionModel.user_id == user_id
+    ).all()
+    session_ids = [s.id for s in sessions]
+ 
+    # 2. Collect widget bots owned by this user
+    bots = db.query(WidgetBot).filter(WidgetBot.owner_id == user_id).all()
+    bot_ids = [b.id for b in bots]
+ 
+    # 3. Delete PostgreSQL rows — cascade handles sessions, messages, api_keys
+    for bot in bots:
+        db.delete(bot)
     db.delete(user)
     db.commit()
-    # Clean MongoDB docs
+ 
+    # 4. Delete MongoDB chat documents and messages
     documents_collection.delete_many({"user_id": user_id})
+    if session_ids:
+        messages_collection.delete_many({"session_id": {"$in": session_ids}})
+ 
+    # 5. Delete widget analytics / intervention data for this user's bots
+    if mongodb is not None and bot_ids:
+        mongodb["widget_messages"].delete_many({"bot_id": {"$in": bot_ids}})
+        mongodb["intervention_tickets"].delete_many({"bot_id": {"$in": bot_ids}})
+        # Also clean bot-scoped documents stored under bot_id as user_id
+        documents_collection.delete_many({"user_id": {"$in": bot_ids}})
+ 
+    # 6. Delete FAISS vector stores from disk
+    vector_path = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}")
+    if os.path.exists(vector_path):
+        shutil.rmtree(vector_path, ignore_errors=True)
+ 
+    # 7. Delete bot-scoped vector stores (stored under bot UUID)
+    for bot_id in bot_ids:
+        bot_vector_path = os.path.join(os.getcwd(), "vector_store", f"user_{bot_id}")
+        if os.path.exists(bot_vector_path):
+            shutil.rmtree(bot_vector_path, ignore_errors=True)
     return {"ok": True}
 
 
