@@ -4,10 +4,11 @@ import ClientDashboard from "./ClientDashboard";
 import ClientDocuments from "./ClientDocuments";
 import ClientWidget from "./ClientWidget";
 import ClientAnalytics from "./ClientAnalytics";
+import ClientFeedback from "./ClientFeedback";
 import "./client-style.css";
 import ClientTickets from "./ClientTickets";
 
-export type ClientPage = "dashboard" | "documents" | "widget" | "analytics" | "tickets";
+export type ClientPage = "dashboard" | "documents" | "widget" | "analytics" | "feedback" | "tickets";
 
 export interface ClientUser {
   id: number;
@@ -51,12 +52,16 @@ export default function ClientApp() {
     setUser(null);
     setBot(null);
   };
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (!authed) return <ClientLogin onLogin={handleLogin} />;
 
   return (
     <div className="cl-layout">
-      <aside className="cl-sidebar">
+      <div className={`cl-sidebar-overlay ${sidebarOpen ? "open" : ""}`}
+      onClick={() => setSidebarOpen(false)}
+    />
+      <aside className={`cl-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="cl-brand">
           <span className="cl-brand-icon">✦</span>
           <span className="cl-brand-name">NovaMind</span>
@@ -68,6 +73,7 @@ export default function ClientApp() {
             ["documents",  "◈", "Documents"],
             ["widget",     "◎", "Widget"],
             ["analytics",  "◉", "Analytics"],
+            ["feedback",   "✦", "Feedback"],
             ["tickets",    "✉", "Tickets"],
           ] as [ClientPage, string, string][]).map(([p, icon, label]) => (
             <button
@@ -94,10 +100,19 @@ export default function ClientApp() {
       </aside>
 
       <main className="cl-main">
+        <div className="cl-page-header">
+        <button
+          className="cl-hamburger"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+        >
+          ☰
+        </button>
+      </div>
         {page === "dashboard"  && bot && <ClientDashboard bot={bot} />}
         {page === "documents"  && bot && <ClientDocuments bot={bot} />}
         {page === "widget"     && bot && <ClientWidget bot={bot} setBot={setBot} user={user} />}
         {page === "analytics"  && bot && <ClientAnalytics bot={bot} />}
+        {page === "feedback"   && bot && <ClientFeedback bot={bot} />}
         {page === "tickets"    && <ClientTickets  />}
       </main>
     </div>

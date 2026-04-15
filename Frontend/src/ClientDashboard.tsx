@@ -121,6 +121,7 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
   if (!data)   return null;
 
   const maxKwCount = data.top_keywords[0]?.count ?? 1;
+  
 
   return (
     <div className="client-dashboard">
@@ -187,6 +188,19 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
             ))}
           </div>
         )}
+      </div>
+      <div className="cl-section">
+        <h2 className="cl-section-title">Your bot</h2>
+        <div className="cl-info-card">
+          <div className="cl-info-row">
+            <span className="cl-info-label">Bot name</span>
+            <span className="cl-info-value">{bot?.name ?? "—"}</span>
+          </div>
+          <div className="cl-info-row">
+            <span className="cl-info-label">Bot ID</span>
+            <span className="cl-info-value cl-mono">{bot?.id ?? "—"}</span>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Bot } from "./ClientApp";
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const API = "http://localhost:8000";
 const token = () => localStorage.getItem("client_token");
@@ -59,18 +60,20 @@ export default function ClientAnalytics({ bot }: Props) {
 
           <div className="cl-section">
             <h2 className="cl-section-title">Messages per day</h2>
-            <div className="cl-bar-chart">
-              {data.messages_per_day.slice(-14).map((d) => (
-                <div className="cl-bar-col" key={d.date}>
-                  <div
-                    className="cl-bar"
-                    style={{ height: `${Math.round((d.count / maxCount) * 120)}px` }}
-                  />
-                  <div className="cl-bar-label">
-                    {new Date(d.date).toLocaleDateString("en", { month: "short", day: "numeric" })}
-                  </div>
-                </div>
-              ))}
+            <div style={{ width: "100%", height: 180 }}>
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={data.messages_per_day.slice(-14)}>
+                  <defs>
+                    <linearGradient id="colorMsg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="var(--accent)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--text3)" }} tickFormatter={(v) => String(v).slice(5)} />
+                  <Tooltip contentStyle={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8 }} />
+                  <Area type="monotone" dataKey="count" stroke="var(--accent)" fill="url(#colorMsg)" strokeWidth={2} dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
