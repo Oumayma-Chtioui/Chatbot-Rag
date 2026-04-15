@@ -440,3 +440,29 @@ export async function getSystemHealth(): Promise<any> {
   if (!res.ok) throw new Error("Failed to fetch system health");
   return await res.json();
 }
+
+export async function getAdvancedAnalytics(botId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/bots/${botId}/analytics/advanced`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch analytics");
+  return await res.json();
+}
+
+export async function getTickets(): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/tickets`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch tickets");
+  return await res.json();
+}
+
+export async function respondToTicket(ticketId: string, answer: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/tickets/${ticketId}/respond`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ answer }),
+  });
+  if (!res.ok) throw new Error("Failed to respond to ticket");
+  return await res.json();
+}

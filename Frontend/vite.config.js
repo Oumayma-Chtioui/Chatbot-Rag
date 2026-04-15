@@ -6,5 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     historyApiFallback: true,  // ← add this
+    proxy: {
+      '/widgets': 'http://localhost:8000',  // ← proxy API requests to FastAPI backend
+    },
   }
 })

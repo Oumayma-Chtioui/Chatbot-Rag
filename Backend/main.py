@@ -48,6 +48,13 @@ app.include_router(widget_chat_router)
 # Static files (serves widget.js)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+from routers.human_intervention import router as intervention_router
+app.include_router(intervention_router, tags=["Intervention"])
+
+from routers.human_intervention import router as intervention_router
+app.include_router(intervention_router, tags=["Intervention"])
+
 @app.get("/")
 def root():
     return {"status": "NovaMind API running"}

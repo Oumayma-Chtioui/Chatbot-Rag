@@ -11,8 +11,67 @@ from models.widget import WidgetBot, WidgetApiKey
 from auth.helpers import get_current_user
 from auth.widget_auth import generate_api_key
 
+from database import mongodb
+from collections import Counter
+import re
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/widgets", tags=["Widgets"])
 
+_STOP = {
+    # English
+    "the","a","an","is","are","was","were","be","been","have","has","had",
+    "do","does","did","will","would","could","should","may","might","can",
+    "i","you","he","she","it","we","they","me","him","her","us","them",
+    "my","your","his","its","our","their","this","that","these","those",
+    "what","which","who","how","when","where","why","and","or","but","if",
+    "in","on","at","to","for","of","with","by","from","about","into","not",
+    # French
+    "je","tu","il","elle","nous","vous","ils","elles","le","la","les","un",
+    "une","des","est","sont","avec","pour","dans","sur","par","que","qui",
+    "quoi","comment","quand","où","pourquoi","pas","plus","très","bien",
+    "aussi","mais","donc","car","comme","tout","tous","toute","toutes",
+    "du","au","aux","ce","cet","cette","ces","mon","ton","son","nos","vos",
+    "leur","leurs","quel","quelle","quels","quelles","entre","sans","après",
+    "avant","depuis","pendant","selon","vers","contre","malgré",
+}
+ 
+_NO_ANSWER = [
+    "i don't have information","i couldn't find","not found in the documents",
+    "no relevant information","i don't know","cannot answer","not mentioned",
+    "no information about","i'm unable to find","there is no information",
+    "document does not contain","not available in","i cannot find",
+    "i was unable to","no data available","je n'ai pas trouvé",
+    "je ne trouve pas","aucune information","pas d'information",
+    "n'est pas mentionné","ne figure pas","introuvable",
+    "je n'ai pas d'information","je ne peux pas répondre",
+    "il n'y a pas d'information","les documents ne contiennent pas",
+]
+ 
+ 
+def _extract_keywords(text: str) -> list:
+    words = re.findall(r"\b[a-zA-ZÀ-ÿ]{3,}\b", text.lower())
+    return [w for w in words if w not in _STOP][:10]
+ 
+ 
+def _is_answered(answer: str) -> bool:
+    if not answer:
+        return False
+    lower = answer.lower()
+    return not any(phrase in lower for phrase in _NO_ANSWER)
+ 
+ 
+def _safe_date_str(val) -> str:
+    """Convert datetime object OR string to ISO string safely."""
+    if val is None:
+        return ""
+    if hasattr(val, "isoformat"):      # datetime object
+        return val.isoformat()
+    return str(val)                    # already a string
+ 
 
 class CreateBotRequest(BaseModel):
     name: str
@@ -353,3 +412,103 @@ async def add_bot_url_document(
     documents_collection.insert_one({**doc_record, "_id": doc_id})
 
     return {"document": doc_record}
+
+@router.get("/bots/{bot_id}/analytics/advanced")
+async def get_advanced_analytics(
+    bot_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        # 1. Ownership check
+        bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+ 
+        # 2. Load messages — cursor to list, limit 5000
+        messages = list(
+            mongodb["widget_messages"]
+            .find({"bot_id": bot_id}, {"_id": 0})
+            .sort("created_at", -1)
+            .limit(5000)
+        )
+ 
+        total = len(messages)
+ 
+        # 3. Answered/unanswered
+        # Support BOTH old docs (no "answered" field) and new ones
+        success_list = []
+        failure_list = []
+ 
+        for m in messages:
+            answered_flag = m.get("answered")           # None if field missing
+            question = m.get("question") or ""
+            answer   = m.get("answer")   or ""
+ 
+            if answered_flag is None:
+                # Old document — compute on the fly from the stored answer
+                answered_flag = _is_answered(answer)
+ 
+            if answered_flag:
+                success_list.append(m)
+            else:
+                failure_list.append(m)
+ 
+        success_count = len(success_list)
+        failure_count = len(failure_list)
+        success_rate  = round(success_count / total * 100, 1) if total > 0 else 0.0
+ 
+        # 4. Top keywords — prefer stored field, fall back to live extraction
+        all_keywords = []
+        for m in messages:
+            kws = m.get("keywords")
+            if kws:                                     # new doc — already extracted
+                all_keywords.extend(kws)
+            else:                                       # old doc — extract now
+                all_keywords.extend(_extract_keywords(m.get("question") or ""))
+ 
+        kw_counts    = Counter(all_keywords)
+        top_keywords = [{"word": w, "count": c} for w, c in kw_counts.most_common(20)]
+ 
+        # 5. Unanswered questions (most recent 25, safe date serialization)
+        unanswered = [
+            {
+                "question":   m.get("question") or "",
+                "created_at": _safe_date_str(m.get("created_at")),
+            }
+            for m in failure_list
+        ][-25:]
+ 
+        # 6. Avg messages per session
+        session_counts = Counter(m.get("session_id") or "unknown" for m in messages)
+        avg_messages   = (
+            round(sum(session_counts.values()) / len(session_counts), 1)
+            if session_counts else 0.0
+        )
+ 
+        # 7. Pending tickets — collection may not exist yet → default to 0
+        try:
+            pending_tickets = mongodb["intervention_tickets"].count_documents({
+                "bot_id": bot_id,
+                "status": "pending_response",
+            })
+        except Exception:
+            pending_tickets = 0
+ 
+        return {
+            "total":                    total,
+            "success_count":            success_count,
+            "failure_count":            failure_count,
+            "success_rate":             success_rate,
+            "top_keywords":             top_keywords,
+            "unanswered_questions":     unanswered,
+            "avg_messages_per_session": avg_messages,
+            "total_sessions":           len(session_counts),
+            "pending_tickets":          pending_tickets,
+        }
+ 
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Advanced analytics error: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Analytics error: {str(e)}")

@@ -5,8 +5,9 @@ import ClientDocuments from "./ClientDocuments";
 import ClientWidget from "./ClientWidget";
 import ClientAnalytics from "./ClientAnalytics";
 import "./client-style.css";
+import ClientTickets from "./ClientTickets";
 
-export type ClientPage = "dashboard" | "documents" | "widget" | "analytics";
+export type ClientPage = "dashboard" | "documents" | "widget" | "analytics" | "tickets";
 
 export interface ClientUser {
   id: number;
@@ -67,6 +68,7 @@ export default function ClientApp() {
             ["documents",  "◈", "Documents"],
             ["widget",     "◎", "Widget"],
             ["analytics",  "◉", "Analytics"],
+            ["tickets",    "✉", "Tickets"],
           ] as [ClientPage, string, string][]).map(([p, icon, label]) => (
             <button
               key={p}
@@ -92,10 +94,11 @@ export default function ClientApp() {
       </aside>
 
       <main className="cl-main">
-        {page === "dashboard"  && <ClientDashboard bot={bot} user={user} />}
-        {page === "documents"  && <ClientDocuments bot={bot} />}
-        {page === "widget"     && <ClientWidget bot={bot} setBot={setBot} user={user} />}
-        {page === "analytics"  && <ClientAnalytics bot={bot} />}
+        {page === "dashboard"  && bot && <ClientDashboard bot={bot} />}
+        {page === "documents"  && bot && <ClientDocuments bot={bot} />}
+        {page === "widget"     && bot && <ClientWidget bot={bot} setBot={setBot} user={user} />}
+        {page === "analytics"  && bot && <ClientAnalytics bot={bot} />}
+        {page === "tickets"    && <ClientTickets  />}
       </main>
     </div>
   );
