@@ -283,14 +283,26 @@ def get_feedback_summary(current_user: UserModel = Depends(get_admin_user), db: 
     if feedback_col is None:
         return {"feedback": []}
 
+    # Get all feedback entries with full details
+    all_feedback = list(feedback_col.find({}, {"_id": 0}).sort("created_at", -1))
+
+    # Group by bot_id for summary
     bot_feedback = {}
-    for item in feedback_col.find({}, {"_id": 0}):
+    for item in all_feedback:
         bot_id = item.get("bot_id")
         if not bot_id:
             continue
-        entry = bot_feedback.setdefault(bot_id, {"bot_id": bot_id, "bot_name": "Unknown", "ratings": [], "total_feedback": 0})
-        entry["ratings"].append(item.get("rating", 0))
-        entry["total_feedback"] += 1
+        if bot_id not in bot_feedback:
+            bot_feedback[bot_id] = {
+                "bot_id": bot_id,
+                "bot_name": "Unknown",
+                "ratings": [],
+                "total_feedback": 0,
+                "feedback_list": []
+            }
+        bot_feedback[bot_id]["ratings"].append(item.get("rating", 0))
+        bot_feedback[bot_id]["total_feedback"] += 1
+        bot_feedback[bot_id]["feedback_list"].append(item)
 
     result = []
     for bot_id, entry in bot_feedback.items():
@@ -300,8 +312,22 @@ def get_feedback_summary(current_user: UserModel = Depends(get_admin_user), db: 
             "bot_name": bot.name if bot else entry["bot_name"],
             "avg_score": round(sum(entry["ratings"]) / len(entry["ratings"]), 2) if entry["ratings"] else 0.0,
             "total_feedback": entry["total_feedback"],
+            "feedback_list": entry["feedback_list"]
         })
     return {"feedback": result}
+
+
+@router.delete("/feedback/{bot_id}")
+def delete_feedback(bot_id: str, current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
+    feedback_col = documents_collection.database["widget_feedback"] if hasattr(documents_collection, 'database') else None
+    if feedback_col is None:
+        raise HTTPException(status_code=404, detail="Feedback collection not found")
+    
+    result = feedback_col.delete_many({"bot_id": bot_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No feedback found for this bot")
+    
+    return {"message": f"Deleted {result.deleted_count} feedback entries"}
 
 
 @router.post("/bots/{bot_id}/preview-key")

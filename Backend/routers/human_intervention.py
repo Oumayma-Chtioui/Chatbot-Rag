@@ -89,7 +89,12 @@ async def request_intervention(
         "answered_at":        None,
     })
 
-    send_verification_code(body.user_email, code)
+    try:
+        send_verification_code(body.user_email, code)
+    except Exception as e:
+        print(f"[INTERVENTION] Error sending verification code: {str(e)}")
+        # Don't fail the request if email fails, just log it
+    
     return {"ticket_id": ticket_id, "message": "Verification code sent"}
 
 
@@ -187,3 +192,27 @@ async def respond_to_ticket(
     )
 
     return {"message": "Answer sent to user"}
+
+
+@router.delete("/widgets/tickets/{ticket_id}")
+async def delete_ticket(
+    ticket_id: str,
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Delete a ticket. Only the bot owner can delete tickets."""
+    ticket = mongodb["intervention_tickets"].find_one(
+        {"ticket_id": ticket_id}, {"_id": 0}
+    )
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Verify the current user owns the bot
+    from models.widget import WidgetBot as WB
+    from database import get_db
+    db = next(get_db())
+    bot = db.query(WB).filter_by(id=ticket["bot_id"], owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this ticket")
+
+    mongodb["intervention_tickets"].delete_one({"ticket_id": ticket_id})
+    return {"message": "Ticket deleted"}

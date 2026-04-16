@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Bot } from "./ClientApp";
 
-const API = "http://localhost:8000";
+const API_BASE = "http://localhost:8000";
 const token = () => localStorage.getItem("client_token");
 
 const categories = ["Accuracy", "Speed", "Relevance", "Missing Info"];
@@ -28,7 +28,7 @@ export default function FeedbackWidget({ bot, onSuccess }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch(`${API}/widgets/bots/${bot.id}/feedback`, {
+      const res = await fetch(`${API_BASE}/widgets/bots/${bot.id}/feedback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -36,10 +36,23 @@ export default function FeedbackWidget({ bot, onSuccess }: Props) {
         },
         body: JSON.stringify({ rating, comment, category }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || "Failed to send feedback");
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseError) {
+        // If we can't parse JSON, check if the request was actually successful
+        if (res.ok) {
+          data = { ok: true };
+        } else {
+          throw new Error(`Server error: ${res.status}`);
+        }
       }
+
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to send feedback");
+      }
+
       setMessage("Thanks! Your feedback was submitted.");
       setComment("");
       setRating(0);
@@ -47,7 +60,8 @@ export default function FeedbackWidget({ bot, onSuccess }: Props) {
       setCategory(categories[0]);
       onSuccess();
     } catch (err: any) {
-      setError(err.message || "Could not submit feedback.");
+      console.error("Feedback submission error:", err);
+      setError(err.message || "Could not submit feedback. Please try again.");
     } finally {
       setSubmitting(false);
     }

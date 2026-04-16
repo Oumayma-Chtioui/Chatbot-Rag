@@ -315,8 +315,11 @@ def create_bot_feedback(
         "category": req.category,
         "created_at": datetime.utcnow().isoformat(),
     }
-    feedback_col.insert_one(feedback_data)
-    return {"ok": True, "feedback": feedback_data}
+    result = feedback_col.insert_one(feedback_data)
+    return {
+        "ok": True,
+        "feedback": {**feedback_data, "_id": str(result.inserted_id)}
+    }
 
 
 @router.get("/bots/{bot_id}/feedback")

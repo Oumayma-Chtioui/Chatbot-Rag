@@ -500,6 +500,15 @@ export async function getAdminFeedback(): Promise<any> {
   return await res.json();
 }
 
+export async function deleteFeedback(botId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/admin/feedback/${botId}`, {
+    method: "DELETE",
+    headers: getAdminHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to delete feedback");
+  return await res.json();
+}
+
 export async function getAdvancedAnalytics(botId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/widgets/bots/${botId}/analytics/advanced`, {
     headers: getClientHeaders(),
@@ -510,7 +519,7 @@ export async function getAdvancedAnalytics(botId: string): Promise<any> {
 
 export async function getTickets(): Promise<any> {
   const res = await fetch(`${API_BASE}/widgets/tickets`, {
-    headers: getHeaders(),
+    headers: getClientHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch tickets");
   return await res.json();
@@ -519,10 +528,19 @@ export async function getTickets(): Promise<any> {
 export async function respondToTicket(ticketId: string, answer: string): Promise<any> {
   const res = await fetch(`${API_BASE}/widgets/tickets/${ticketId}/respond`, {
     method: "POST",
-    headers: getHeaders(),
+    headers: getClientHeaders(),
     body: JSON.stringify({ answer }),
   });
   if (!res.ok) throw new Error("Failed to respond to ticket");
+  return await res.json();
+}
+
+export async function deleteTicket(ticketId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/tickets/${ticketId}`, {
+    method: "DELETE",
+    headers: getClientHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to delete ticket");
   return await res.json();
 }
 

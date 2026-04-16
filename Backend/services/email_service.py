@@ -12,15 +12,23 @@ BRAND_COLOR   = "#6366f1"
 
 
 def _send(to: str, subject: str, html: str):
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"NovaMind <{SMTP_USER}>"
-    msg["To"]      = to
-    msg.attach(MIMEText(html, "html"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-        s.starttls()
-        s.login(SMTP_USER, SMTP_PASSWORD)
-        s.sendmail(SMTP_USER, to, msg.as_string())
+    if not SMTP_USER or not SMTP_PASSWORD:
+        print(f"[EMAIL] SMTP not configured. Would send to {to}: {subject}")
+        return
+    
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"NovaMind <{SMTP_USER}>"
+        msg["To"]      = to
+        msg.attach(MIMEText(html, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.sendmail(SMTP_USER, to, msg.as_string())
+        print(f"[EMAIL] Sent to {to}")
+    except Exception as e:
+        print(f"[EMAIL] Error sending to {to}: {str(e)}")
 
 
 def send_verification_code(user_email: str, code: str):

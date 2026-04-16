@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -43,7 +44,8 @@ NO_ANSWER_PHRASES = [
     "no information about", "i'm unable to find", "there is no information",
     "document does not contain", "not available in", "based on the provided",
     "the document does not", "i cannot find", "unfortunately, i don't",
-    "i was unable to", "no data available",
+    "i was unable to", "no data available", "the information you are asking for is not present",
+    "information is not present", "is not present in the provided",
     # French
     "je n'ai pas trouvé", "je ne trouve pas", "aucune information",
     "pas d'information", "n'est pas mentionné", "ne figure pas",
@@ -90,6 +92,8 @@ async def widget_chat(
     # CORS origin check
     if bot.allowed_origin:
         origin = request.headers.get("origin", "")
+        logging.debug(f"Bot allowed_origin: {bot.allowed_origin}, Request origin: {origin}")
+        print(f"DEBUG: Bot allowed_origin: {bot.allowed_origin}, Request origin: {origin}")
         if origin and bot.allowed_origin not in origin:
             raise HTTPException(
                 status_code=403,

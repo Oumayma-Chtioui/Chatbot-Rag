@@ -27,11 +27,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Single CORS middleware — allows both your frontend and widget origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "null"],  # null for local files
     allow_origin_regex=r".*",   # widget requests can come from any site
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "X-Api-Key"],
+    allow_headers=["Authorization", "Content-Type", "X-Api-Key", "Accept", "Origin"],
+    expose_headers=["*"],
 )
 
 # Existing routers
