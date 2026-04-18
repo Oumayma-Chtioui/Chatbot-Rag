@@ -1,0 +1,21 @@
+question,ground_truth,document_hint
+What is supervised learning?,Supervised learning is a type of machine learning where the algorithm learns from labeled training data to make predictions on new unseen data.,CS229
+What are the two main types of supervised learning tasks?,The two main types are regression (predicting continuous values) and classification (predicting discrete categories).,CS229
+What is gradient descent?,Gradient descent is an optimization algorithm that iteratively adjusts parameters in the direction of the negative gradient of the loss function to minimize it.,CS229
+What is the cost function in linear regression?,The cost function in linear regression is the mean squared error (MSE) which measures the average squared difference between predicted and actual values.,CS229
+What is overfitting in machine learning?,Overfitting occurs when a model learns the training data too well including its noise and random fluctuations resulting in poor generalization to new unseen data.,CS229
+What is regularization and why is it used?,Regularization is a technique that adds a penalty term to the loss function to discourage complex models and reduce overfitting by constraining the model parameters.,CS229
+What is the difference between L1 and L2 regularization?,L1 regularization adds the absolute value of weights as penalty encouraging sparsity while L2 regularization adds the squared value of weights encouraging small but non-zero weights.,CS229
+What is a neural network?,A neural network is a computational model inspired by the human brain consisting of interconnected layers of nodes (neurons) that learn to transform inputs into outputs through training.,CS229
+What is backpropagation?,Backpropagation is the algorithm used to train neural networks by computing gradients of the loss with respect to each parameter using the chain rule and propagating errors backwards through the network.,CS229
+What is the vanishing gradient problem?,The vanishing gradient problem occurs in deep neural networks when gradients become extremely small during backpropagation making it difficult for early layers to learn effectively.,CS229
+What is a support vector machine?,A support vector machine (SVM) is a supervised learning algorithm that finds the optimal hyperplane that maximally separates classes in feature space.,CS229
+What is cross-validation?,Cross-validation is a technique to assess model generalization by splitting data into multiple folds training on some folds and testing on the held-out fold repeating for all combinations.,CS229
+What is the bias-variance tradeoff?,The bias-variance tradeoff describes the tension between a model's ability to fit training data (low bias) and its ability to generalize to new data (low variance) as model complexity changes.,CS229
+What is a decision tree?,A decision tree is a supervised learning algorithm that splits data recursively based on feature thresholds creating a tree structure where leaves represent predictions.,CS229
+What is ensemble learning?,Ensemble learning combines multiple individual models to produce better predictive performance than any single model alone through techniques like bagging boosting or stacking.,CS229
+What is principal component analysis (PCA)?,PCA is an unsupervised dimensionality reduction technique that transforms data into a new coordinate system where axes (principal components) capture maximum variance.,CS229
+What is the k-nearest neighbors algorithm?,KNN is a non-parametric algorithm that classifies a new point by looking at the k closest training examples in feature space and taking a majority vote.,CS229
+What is a confusion matrix?,A confusion matrix is a table that summarizes classification performance showing true positives false positives true negatives and false negatives.,CS229
+What is precision and recall?,Precision is the fraction of predicted positives that are actually positive while recall is the fraction of actual positives that were correctly predicted.,CS229
+What is the F1 score?,The F1 score is the harmonic mean of precision and recall providing a single metric that balances both measures especially useful for imbalanced datasets.,CS229
