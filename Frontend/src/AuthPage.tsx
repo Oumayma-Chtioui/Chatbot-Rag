@@ -1,5 +1,7 @@
 import { useState, ChangeEvent } from "react";
 import { AuthPageProps } from './types.tsx';
+import { GoogleLogin } from '@react-oauth/google';
+
 
 const API = "http://localhost:8000";
 
@@ -54,6 +56,38 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
       setLoading(false);
     }
   };
+
+
+  const MyLoginComponent = () => {
+    return (
+      <div>
+        <GoogleLogin
+          onSuccess={async (credentialResponse) => {
+            try {
+              const res = await fetch(`${API}/auth/google`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ credential: credentialResponse.credential }),
+              });
+              const data = await res.json();
+              if (!res.ok) {
+                setError(data.detail || "Google login failed.");
+                return;
+              }
+              localStorage.setItem("token", data.access_token);
+              localStorage.setItem("user", JSON.stringify({ name: data.name, email: data.email, is_admin: data.is_admin }));
+              onLogin(data.name, data.is_admin);
+            } catch (err) {
+              setError("Could not connect to the server.");
+            }
+          }}
+          onError={() => setError("Google login failed.")}
+        />
+      </div>
+    );
+  };
+  
+
 
   return (
     <div className="auth-page">
@@ -136,9 +170,7 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
 
           <div className="divider">or continue with</div>
 
-          <button className="btn-secondary" disabled>
-            <span>🌐</span> Continue with Google
-          </button>
+          <MyLoginComponent />
         </div>
       </div>
     </div>
