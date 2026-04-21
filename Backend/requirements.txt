@@ -34,3 +34,6 @@ trafilatura
 playwright
 
 nest-asyncio
+
+langchain-mistralai 
+langfuse

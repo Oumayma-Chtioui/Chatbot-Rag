@@ -50,9 +50,10 @@ async def chat(
     try:
         # Generate answer using RAG with user_id and session_id
         result = generate_answer(
+            question=request.message,
             user_id=current_user.id,
             session_id=request.session_id,
-            question=request.message
+            memory_session_id=request.session_id,
         )
         
         logger.info(f"✅ Generated answer: {result['answer'][:100]}...")
