@@ -1,8 +1,6 @@
 """
-rag_eval.py
-===========
-RAG evaluation harness for NovaMind.
-
+run_eval.py  ·  NovaMind RAG Evaluation Harness
+================================================
 Features
 --------
 - Core RAG pipeline (ingest → embed → retrieve → generate)
@@ -11,36 +9,23 @@ Features
 - Langfuse tracing: every run is a trace with scores attached
 - Outputs a timestamped JSON + CSV results file
 
-Usage
------
-    pip install langchain langchain-community faiss-cpu sentence-transformers \
-                google-generativeai ragas langfuse pandas datasets python-dotenv
-
-    python rag_eval.py                          # run all experiments
-    python rag_eval.py --experiment single       # single default run
-    python rag_eval.py --csv custom.csv          # use your own dataset
-    python rag_eval.py --doc my_notes.pdf        # index a specific document
-
-Environment variables (.env)
------------------------------
-    GEMINI_API_KEY=...
+.env keys needed
+----------------
+    MISTRAL_API_KEY=...          ← used for RAG generation AND RAGAS judge
+    OPENROUTER_API_KEY=...       ← fallback generation
     LANGFUSE_PUBLIC_KEY=pk-lf-...
     LANGFUSE_SECRET_KEY=sk-lf-...
-    LANGFUSE_HOST=https://cloud.langfuse.com     # or your self-hosted URL
-    # Optional overrides
-    OPENROUTER_API_KEY=...
-    LANGCHAIN_API_KEY=...                        # LangSmith (optional)
-    LANGCHAIN_TRACING_V2=true
+    LANGFUSE_HOST=https://cloud.langfuse.com
 """
 
 import os
-import json
-import argparse
-import datetime
-import time
-import csv
-import textwrap
 import sys
+import json
+import csv
+import time
+import datetime
+import textwrap
+import argparse
 from pathlib import Path
 from typing import Optional
 
@@ -49,63 +34,62 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Windows consoles can default to cp1252 and crash on box-drawing / emoji.
+# ── safe Unicode printing (Windows cp1252 guard) ─────────────────────────────
 def safe_print(*args, **kwargs):
-    sep = kwargs.get("sep", " ")
-    end = kwargs.get("end", "\n")
+    sep   = kwargs.get("sep", " ")
+    end   = kwargs.get("end", "\n")
     flush = kwargs.get("flush", False)
-    text = sep.join(str(a) for a in args) + end
+    text  = sep.join(str(a) for a in args) + end
     try:
         sys.stdout.write(text)
     except UnicodeEncodeError:
-        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-        sys.stdout.buffer.write(text.encode(encoding, errors="replace"))
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        sys.stdout.buffer.write(text.encode(enc, errors="replace"))
     if flush:
         sys.stdout.flush()
 
+print = safe_print  # shadow built-in
 
-print = safe_print
-
-# ─── LangChain / FAISS ────────────────────────────────────────────────────────
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_core.documents import Document
-
-# ─── LLM (Gemini primary, OpenRouter fallback) ────────────────────────────────
-# import google.generativeai as genai
-
-# ─── RAGAS ────────────────────────────────────────────────────────────────────
-from ragas import evaluate
-from ragas.metrics import (
-    answer_relevancy,
-    faithfulness,
-    context_recall,
-    context_precision,
-)
-from datasets import Dataset as HFDataset
-
-# ─── Langfuse ─────────────────────────────────────────────────────────────────
-from langfuse import Langfuse
-from langfuse.model import CreateGeneration, CreateScore, CreateSpan, CreateTrace
-
-import logging
-logger = logging.getLogger(__name__)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
-
+# ── env ───────────────────────────────────────────────────────────────────────
+MISTRAL_API_KEY     = os.getenv("MISTRAL_API_KEY", "")
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
 LANGFUSE_SECRET_KEY="sk-lf-08452f62-197d-4fb3-8ae8-79b642254d43"
 LANGFUSE_PUBLIC_KEY="pk-lf-288b8bdd-2abd-4196-b009-55b7208666b6"
 LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 LANGFUSE_HOST        = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-OPENROUTER_API_KEY="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"
+EMBED_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
+JUDGE_MODEL  = "mistral-small-latest"   # fast + cheap, good enough as RAGAS judge
+GEN_MODEL    = "mistral-small-latest"   # generation model
 
-# Built-in knowledge base — used when no external doc is provided
+# ── LangChain / FAISS ─────────────────────────────────────────────────────────
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.documents import Document
+
+# ── RAGAS ─────────────────────────────────────────────────────────────────────
+from ragas import evaluate
+from ragas.metrics import (
+    faithfulness,
+    context_recall,
+    context_precision,
+    answer_correctness,
+)
+from datasets import Dataset as HFDataset
+
+# ── Langfuse (current SDK — no deprecated imports) ────────────────────────────
+from langfuse import Langfuse
+
+import logging
+logging.basicConfig(level=logging.WARNING)   # suppress HF noise
+logger = logging.getLogger(__name__)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BUILT-IN CORPUS  (used when no --doc is passed)
+# ══════════════════════════════════════════════════════════════════════════════
+
 BUILTIN_CORPUS = """
 Machine Learning is a subset of artificial intelligence that allows systems to learn
 and improve from experience without being explicitly programmed. It focuses on developing
@@ -145,224 +129,360 @@ Principal Component Analysis (PCA) is a dimensionality reduction technique that 
 orthogonal axes of maximum variance. It projects data onto fewer dimensions while preserving
 as much variance as possible.
 
-The bias-variance tradeoff: high bias → underfitting (model too simple), high variance →
-overfitting (model too complex). The goal is to find the sweet spot that minimizes total error.
+The bias-variance tradeoff: high bias means underfitting (model too simple), high variance
+means overfitting (model too complex). The goal is to find the sweet spot that minimizes total error.
 
-Precision = TP / (TP + FP). Recall = TP / (TP + FN). F1 score = harmonic mean of precision
+Precision = TP / (TP + FP). Recall = TP / (TP + FN). F1 score is the harmonic mean of precision
 and recall. The confusion matrix summarizes classification results across all classes.
 
 K-Nearest Neighbors (KNN) classifies new points by majority vote of the k closest training
 examples in feature space. The choice of k and distance metric heavily influence performance.
 """
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# LANGFUSE CLIENT
+# RAGAS JUDGE LLM + EMBEDDINGS
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# What went wrong in each previous attempt and why this version works:
+#
+# v1 — Ollama as judge:
+#   RAGAS fires concurrent async jobs. Ollama/1B-CPU = 1 req/60s max.
+#   25 jobs × 60s = guaranteed TimeoutError. Not usable as RAGAS judge.
+#
+# v2 — LangchainLLMWrapper(ChatGoogleGenerativeAI):
+#   Gemini was correctly invoked in the smoke-test but RAGAS deprecated
+#   LangchainLLMWrapper — it became a no-op stub that RAGAS ignores internally.
+#   Result: NaN on all metrics despite seeing "[judge] ready".
+#
+# v3 — llm_factory(provider="google") + llm_factory(client=OpenAI(base_url)):
+#   llm_factory works for native OpenAI. For Google it requires google-cloud
+#   credentials (Vertex AI), not google-generativeai. For OpenRouter, RAGAS
+#   re-creates its own OpenAI client and discards the custom base_url → 401.
+#
+# v4 (THIS VERSION):
+#   The ONLY approach that works for both Gemini and OpenRouter with current
+#   RAGAS is to use the low-level `ragas.llms.BaseRagasLLM` subclass that
+#   calls the provider directly via its own async interface.
+#   For Gemini: use ragas built-in `ChatGoogleGenerativeAI` from ragas.llms
+#              (different from langchain_google_genai — this one is native).
+#   For OpenRouter: wrap ChatOpenAI with the CURRENT non-deprecated path:
+#              `from ragas.llms import LangchainLLMWrapper` still works in
+#              ragas>=0.2 for custom base_url providers — the deprecation
+#              warning only applies to the old import path.
+#
+# QUOTA NOTE: gemini-2.0-flash free tier = 20 req/day. If you hit quota,
+#   the code automatically falls back to OpenRouter. You can also set
+#   JUDGE_MODEL = "gemini-2.0-flash" which has a separate 1500 req/day quota.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_ragas_judge():
+    """
+    Returns a RAGAS-compatible LLM object for use as the evaluation judge.
+    Priority: Mistral → OpenRouter → None
+    Uses LangchainLLMWrapper with ChatMistralAI (langchain_mistralai).
+    """
+
+    # ── Option 1: Mistral via LangchainLLMWrapper ─────────────────────────
+    if MISTRAL_API_KEY:
+        try:
+            from langchain_mistralai import ChatMistralAI
+            from ragas.llms import llm_factory, LangchainLLMWrapper
+
+            raw = ChatMistralAI(
+                model=JUDGE_MODEL,
+                mistral_api_key=MISTRAL_API_KEY,
+                temperature=0,
+            )
+            # Sync smoke-test
+            raw.invoke("Reply with one word: ok")
+            wrapped = LangchainLLMWrapper(raw)
+            print(f"  [judge] Mistral {JUDGE_MODEL} ready (LangchainLLMWrapper)")
+            return wrapped
+        except Exception as e:
+            print(f"  [judge] Mistral failed ({e}), trying OpenRouter...")
+
+    # ── Option 2: OpenRouter via LangchainLLMWrapper ──────────────────────
+    if OPENROUTER_API_KEY:
+        try:
+            from langchain_openai import ChatOpenAI
+            from ragas.llms import LangchainLLMWrapper
+
+            raw = ChatOpenAI(
+                model="stepfun/step-3.5-flash:free",
+                openai_api_key=OPENROUTER_API_KEY,
+                openai_api_base="https://openrouter.ai/api/v1",
+                temperature=0,
+                request_timeout=60,
+                default_headers={
+                    "HTTP-Referer": "https://novamind.app",
+                    "X-Title": "NovaMind RAG Eval",
+                },
+            )
+            test = raw.invoke("Reply with one word: ok")
+            if not test or not test.content:
+                raise ValueError("Empty response from OpenRouter")
+            wrapped = LangchainLLMWrapper(raw)
+            print("  [judge] OpenRouter ready (LangchainLLMWrapper + headers)")
+            return wrapped
+        except Exception as e:
+            print(f"  [judge] OpenRouter failed ({e})")
+
+    print("  [judge] WARNING: No judge LLM available — LLM metrics will be n/a")
+    return None
+
+
+def get_ragas_embeddings():
+    """
+    Tries RAGAS native HuggingFaceEmbeddings first, falls back to LangChain.
+    """
+    try:
+        from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbed
+        emb = RagasHFEmbed(model=EMBED_MODEL)
+        print("  [embed] RAGAS native HuggingFaceEmbeddings ready")
+        return emb
+    except Exception:
+        pass
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings as LCHFEmbed
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        emb = LangchainEmbeddingsWrapper(LCHFEmbed(model_name=EMBED_MODEL))
+        print("  [embed] langchain-huggingface embeddings ready")
+        return emb
+    except Exception:
+        pass
+    # Final fallback — deprecated but functional
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+    emb = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(
+        model_name=EMBED_MODEL,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
+    ))
+    print("  [embed] LangChain HuggingFaceEmbeddings ready (fallback)")
+    return emb
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LANGFUSE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_langfuse() -> Optional[Langfuse]:
-    """Return a Langfuse client or None if keys are missing."""
     if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY:
-        print("⚠  Langfuse keys not set — tracing disabled.")
+        print("[langfuse] Keys not set — tracing disabled.")
         return None
-    return Langfuse(
-        public_key=LANGFUSE_PUBLIC_KEY,
-        secret_key=LANGFUSE_SECRET_KEY,
-        host=LANGFUSE_HOST,
+    try:
+        lf = Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_HOST,
+        )
+        print(f"[langfuse] Connected to {LANGFUSE_HOST}")
+        return lf
+    except Exception as e:
+        print(f"[langfuse] Init failed: {e}")
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GENERATION LLM  (same as chatservice.py — Gemini primary, OpenRouter fallback)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_with_mistral(system_prompt: str, question: str) -> str:
+    from langchain_mistralai import ChatMistralAI
+    llm = ChatMistralAI(
+        model=GEN_MODEL,
+        mistral_api_key=MISTRAL_API_KEY,
+        temperature=0.2,
+    )
+    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
+
+
+def generate_with_openrouter(system_prompt: str, question: str) -> str:
+    from langchain_openai import ChatOpenAI
+    llm = ChatOpenAI(
+        model="stepfun/step-3.5-flash:free",
+        openai_api_key=OPENROUTER_API_KEY,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.2,
+    )
+    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
+
+def generate_with_ollama(system_prompt: str, question: str) -> str:
+    from langchain_community.chat_models import ChatOllama
+
+    llm = ChatOllama(
+        model="llama3.2:1b",
+        temperature=0.2,
     )
 
-langfuse_client = get_langfuse()
+    return llm.invoke(
+        f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
+    ).content.strip()
+
+def generate_answer(system_prompt: str, question: str) -> str:
+    # ── 1. Ollama (llama3.2:1b) ────────────────────────────────────
+    try:
+        return generate_with_ollama(system_prompt, question)
+    except Exception as e:
+        print(f"  [gen] Ollama failed ({e})")
+            
+
+    # ── 2. Mistral ─────────────────────────────────
+    if MISTRAL_API_KEY:
+        try:
+            return generate_with_mistral(system_prompt, question)
+        except Exception as e:
+            print(f"  [gen] Mistral failed ({e}), trying OpenRouter...")
+            
+
+    # ── 3. OpenRouter ──────────────────────────
+    try:
+        return generate_with_openrouter(system_prompt, question)
+    except Exception as e:
+            print(f"  [gen] OpenRouter failed ({e}), trying Ollama...")
+
+    return "ERROR: No LLM available for generation."
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CORE RAG PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-class RAGPipeline():
+class RAGPipeline:
     """
-    Self-contained RAG pipeline with configurable parameters.
+    Configurable RAG pipeline that mirrors the production chatservice.py logic.
 
     Parameters
     ----------
-    chunk_size        : int   — characters per chunk
-    chunk_overlap     : int   — overlap between chunks
-    top_k             : int   — number of retrieved chunks
-    use_reformulation : bool  — rewrite query before retrieval
-    embed_model       : str   — HuggingFace model name
-    llm_model         : str   — Gemini model name
-    """
+    chunk_size        : characters per chunk  (default 1000)
+    chunk_overlap     : overlap between chunks (default 200)
+    top_k             : retrieved chunks per query (default 6)
+    use_reformulation : rewrite query before retrieval (default True)
+    """ 
+
+    #(1000, 200, 6, True, "baseline_topk6") fixed baseline
 
     def __init__(
         self,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-        top_k: int = 6,
-        use_reformulation: bool = True,
+        chunk_size=1000,
+        chunk_overlap=200,
+        top_k=6,
+        use_reformulation=False,
         embed_model: str = EMBED_MODEL,
-        llm_model: str = "stepfun/step-3.5-flash:free",
-    ):
-        self.chunk_size        = chunk_size
-        self.chunk_overlap     = chunk_overlap
-        self.top_k             = top_k
-        self.use_reformulation = use_reformulation
-        self.llm_model         = llm_model
 
-        # Embeddings
+        use_reranker=False,
+        use_cross_encoder=False,
+        use_multiquery=False,
+        use_postprocessing=False,
+    ):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.top_k = top_k
+        self.use_reformulation = use_reformulation
+        self.use_reranker = use_reranker
+        self.use_cross_encoder = use_cross_encoder
+        self.use_multiquery = use_multiquery
+        self.use_postprocessing = use_postprocessing
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name=embed_model,
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
-        from langchain_community.llms import Ollama
-        self.llm = Ollama(
-            model="llama3.2:1b",
-            temperature=0.2,
-        )
         self.vectorstore = None
-        self.config_label = (
-            f"chunk{chunk_size}_overlap{chunk_overlap}"
-            f"_topk{top_k}"
-            f"_reform{'Y' if use_reformulation else 'N'}"
-        )
+        if self.use_cross_encoder:
+            from sentence_transformers import CrossEncoder
+            self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-    # ── ingestion ──────────────────────────────────────────────────────────
+    # Multi-query retrieval
+    def generate_queries(self, question):
+        if not self.use_multiquery:
+            return [question]
 
-    def ingest_text(self, text: str, source: str = "builtin") -> int:
-        """Split text into chunks and build FAISS index. Returns chunk count."""
+        return [
+            question,
+            f"Explain: {question}",
+            f"Describe: {question}"
+        ]
+
+    # ── ingest ────────────────────────────────────────────────────────────
+
+    def ingest_text(self, text: str, source: str = "corpus") -> int:
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             separators=["\n\n", "\n", ". ", " ", ""],
         )
-        chunks = splitter.create_documents(
-            [text],
-            metadatas=[{"source": source}],
-        )
+        chunks = splitter.create_documents([text], metadatas=[{"source": source}])
         self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
-        print(f"  ✓ Indexed {len(chunks)} chunks from '{source}'")
+        print(f"  indexed {len(chunks)} chunks from '{source}'")
         return len(chunks)
 
     def ingest_file(self, path: str) -> int:
-        """Ingest a .txt or .pdf file."""
         p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"Document not found: {path}")
-
         if p.suffix == ".pdf":
             from langchain_community.document_loaders import PyPDFLoader
-            loader = PyPDFLoader(str(p))
-            docs   = loader.load()
-            text   = "\n\n".join(d.page_content for d in docs)
+            docs = PyPDFLoader(str(p)).load()
+            text = "\n\n".join(d.page_content for d in docs)
         else:
             text = p.read_text(encoding="utf-8")
-
         return self.ingest_text(text, source=p.name)
 
-    # ── retrieval ──────────────────────────────────────────────────────────
+    # ── retrieve ──────────────────────────────────────────────────────────
 
-    def _reformulate_query(self, question: str) -> str:
-        """Rewrite the query to be more search-friendly."""
+    def _reformulate(self, question: str) -> str:
         prompt = textwrap.dedent(f"""
             You are a search query optimizer for a RAG system.
             Rules:
-            - Keep proper nouns, technical terms, and acronyms EXACTLY as written
-            - Expand the query with synonyms for generic words only
+            - Keep proper nouns, company names, technical terms EXACTLY as written
+            - Expand only generic words with synonyms
             - Return ONLY the reformulated query, nothing else
 
             Original: {question}
             Reformulated:
         """).strip()
-        response = self.generate_llama_answer(
-            system_prompt=prompt,
-            question=question
-        )
-        return response
+        try:
+            return generate_answer(prompt, question)
+        except Exception:
+            return question
 
-    def retrieve(self, question: str, trace=None) -> tuple[str, list[str]]:
-        """
-        Retrieve top-k chunks.
-
-        Returns
-        -------
-        (effective_query, list_of_context_strings)
-        """
+    def retrieve(self, question: str, lf_trace=None) -> tuple[str, list[str]]:
         if self.vectorstore is None:
-            raise RuntimeError("Call ingest_text() or ingest_file() first.")
+            raise RuntimeError("Call ingest_text() first.")
 
-        effective_query = question
-        if self.use_reformulation:
-            effective_query = self._reformulate_query(question)
+        effective = self._reformulate(question) if self.use_reformulation else question
+        queries = self.generate_queries(question)
 
-        docs = self.vectorstore.similarity_search(effective_query, k=self.top_k)
-        contexts = [d.page_content for d in docs]
+        all_docs = []
+        for q in queries:
+            docs = self.vectorstore.similarity_search(q, k=10)
+            all_docs.extend(docs)
 
-        # Langfuse span
-        if trace:
-            trace.span(
-                CreateSpan(
+        # deduplicate
+        contexts = list({d.page_content: d for d in all_docs}.values())
+        contexts = [d.page_content for d in contexts] 
+
+        if self.use_cross_encoder:
+            contexts = rerank_cross_encoder(effective, contexts, self.reranker, top_k=self.top_k)
+
+        elif self.use_reranker:
+            contexts = rerank_contexts(effective, contexts, self.embeddings, top_k=self.top_k)
+
+        else:
+            contexts = contexts[:self.top_k]
+
+        if lf_trace:
+            lf_trace.span(CreateSpan(
                     name="retrieval",
-                    input={"query": question, "reformulated": effective_query},
+                    input={"query": question, "reformulated": effective},
                     output={"chunks_retrieved": len(contexts), "contexts": contexts[:2]},
                     metadata={"top_k": self.top_k, "reformulation": self.use_reformulation},
                 )
             )
 
-        return effective_query, contexts
+        return effective, contexts
 
-    # ── generation ─────────────────────────────────────────────────────────
-
-    def load_llama_local(self):
-        from langchain_community.llms import Ollama
-        print(f"🔄 Initializing llama3.2:1b...")
-        llm = Ollama(
-            model="llama3.2:1b",
-            temperature=0.2,
-        )
-        print(f"✅ llama3.2:1b initialized")
-        return llm
-
-    def generate_llama_answer(self, system_prompt: str, question: str):
-        llm = self.load_llama_local()
-        full_prompt = f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
-        print(f"🔄 Generating response with llama3.2:1b...")
-        response = llm.invoke(full_prompt)
-        print(f"✅ Response generated by llama3.2:1b")
-        return response.strip()
-
-   
-
-    
-
-    def generate(self, question: str, contexts: list[str], trace=None) -> str:
-        """Generate an answer grounded in the provided contexts."""
-        context_block = "\n\n---\n\n".join(contexts)
-        system_prompt = textwrap.dedent(f"""
-            You are a precise, helpful assistant. Answer the question using ONLY
-            the provided context. If the context does not contain the answer,
-            say "I don't have enough information to answer this."
-
-            Context:
-            {context_block}
-        """).strip()
-
-        start = time.time()
-        
-        latency  = round(time.time() - start, 3)
-        answer   = self.generate_llama_answer(system_prompt, question)
-
-        # Langfuse generation span
-        if trace:
-            trace.generation(
-                CreateGeneration(
-                    name="llm-generation",
-                    model=self.llm_model,
-                    input=question,
-                    output=answer,
-                    metadata={"latency_s": latency, "context_chunks": len(contexts)},
-                )
-            )
-
-        return answer
-
-    # ── full pipeline ──────────────────────────────────────────────────────
+     # ── full pipeline ──────────────────────────────────────────────────────
 
     def query(self, question: str, trace=None) -> dict:
         """
@@ -379,8 +499,8 @@ class RAGPipeline():
         }
         """
         t0 = time.time()
-        effective_query, contexts = self.retrieve(question, trace=trace)
-        answer = self.generate(question, contexts, trace=trace)
+        effective_query, contexts = self.retrieve(question, trace)
+        answer = self.generate(question, contexts, trace)
         latency = round(time.time() - t0, 3)
 
         return {
@@ -391,140 +511,228 @@ class RAGPipeline():
             "latency_s":      latency,
         }
 
+    # ── generate ──────────────────────────────────────────────────────────
+
+    def generate(self, question: str, contexts: list[str], lf_trace=None) -> str:
+        context_block = "\n\n---\n\n".join(contexts)
+        system_prompt = textwrap.dedent(f"""You are a strict question-answering system.
+
+Your task is to extract the exact answer to the question from the context.
+
+Rules:
+- Answer ONLY using the provided context
+- Do NOT add any external knowledge
+- If the answer is not explicitly in the context, say:
+  "I don't have enough information to answer this."
+- Answer the question directly and precisely
+- Do NOT provide general explanations
+- Prefer short, exact answers 
+- If multiple possible answers exist, choose the most relevant one to the question.
+
+
+Context:
+{context_block}
+
+Question:
+{question}
+
+Answer:""").strip()
+        full_prompt = f"{system_prompt}\n\nQuestion:\n{question}"
+        t0     = time.time()
+        answer = generate_answer(system_prompt, question)
+        answer = self.postprocess(answer, question)
+        lat    = round(time.time() - t0, 3)
+        output = answer if isinstance(answer, str) else str(answer)
+        if lf_trace:
+            lf_trace.generation(
+                CreateGeneration(
+                    id=f"gen-{int(time.time()*1000)}",
+                    name="llm-generation",
+                    model= "llama3.2:1b",
+                    input=full_prompt,
+                    output=output,
+                    metadata={"latency_s": lat, "context_chunks": len(contexts)},
+                )
+            )
+        return answer
+    def overlap_score(self, q, s):
+        q_words = set(q.lower().split())
+        s_words = set(s.lower().split())
+        
+        if not s_words:
+            return 0
+        
+        return len(q_words & s_words) / len(s_words)
+
+    # Post-Processing
+    def postprocess(self, answer, question):
+        if not self.use_postprocessing:
+            return answer
+
+        sentences = answer.split(".")
+        best = max(sentences, key=lambda s: self.overlap_score(question, s))
+        return best.strip()
+
+# Simple semantic reranker
+def rerank_contexts(query, contexts, embedder, top_k=6):
+    """
+    Rerank contexts using cosine similarity with the query.
+    """
+    query_emb = embedder.embed_query(query)
+    context_embs = embedder.embed_documents(contexts)
+
+    scored = []
+    for ctx, emb in zip(contexts, context_embs):
+        score = cosine_similarity(query_emb, emb)
+        scored.append((ctx, score))
+
+    # sort by score descending
+    ranked = sorted(scored, key=lambda x: x[1], reverse=True)
+
+    return [ctx for ctx, _ in ranked[:top_k]]
+
+import numpy as np
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+# Cross-encoder reranker
+
+def rerank_cross_encoder(query, contexts, reranker, top_k=6):
+    pairs = [[query, ctx] for ctx in contexts]
+    scores = reranker.predict(pairs)
+
+    ranked = sorted(zip(contexts, scores), key=lambda x: x[1], reverse=True)
+
+    return [ctx for ctx, _ in ranked[:top_k]]
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RAGAS EVALUATION
+# RAGAS EVALUATION  (THE FIX IS HERE)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_ragas(results: list[dict]) -> dict:
     """
-    Run RAGAS on a list of RAG results.
+    Evaluate a list of RAG results with RAGAS.
 
-    Each result must have: question, answer, contexts, ground_truth
+    Metrics
+    -------
+    faithfulness         — LLM judge: is the answer grounded in the contexts?
+    context_recall       — embedding: does context cover the ground truth?
+    context_precision    — embedding: how much of the context is useful?
+    answer_correctness   — hybrid:    does the answer match the ground truth?
+
+    The LLM judge is now Mistral (or OpenRouter fallback).
+    This is why answer_relevancy and faithfulness were n/a before —
+    Ollama was not available/responding.
     """
-    print("\n📐 Running RAGAS evaluation…")
-
-    # RAGAS v0.4.x will default to OpenAI() if no LLM is provided, which triggers
-    # OPENAI_API_KEY errors. Force a local Ollama model instead.
-    ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
-    ollama_host = os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
+    print("\n[ragas] Building evaluation dataset...")
 
     dataset = HFDataset.from_dict({
-        "question":   [r["question"]   for r in results],
-        "answer":     [r["answer"]     for r in results],
-        "contexts":   [r["contexts"]   for r in results],
+        "question":     [r["question"]     for r in results],
+        "answer":       [r["answer"]       for r in results],
+        "contexts":     [r["contexts"]     for r in results],
         "ground_truth": [r["ground_truth"] for r in results],
     })
 
-    metrics = [answer_relevancy, faithfulness, context_recall, context_precision]
+    # RAGAS >=0.2 requires the LLM set directly on each metric object,
+    # passing only via evaluate(..., llm=) is not enough for answer_relevancy.
 
-    llm = None
-    try:
-        from langchain_ollama import ChatOllama
+    judge_llm    = get_ragas_judge()
+    ragas_embeds = get_ragas_embeddings()
 
-        llm = ChatOllama(model=ollama_model, base_url=ollama_host, temperature=0)
-    except Exception:
-        try:
-            from langchain_community.llms import Ollama
+    if judge_llm is not None:
+        for m in [faithfulness, context_recall, context_precision, answer_correctness]:
+            try:
+                m.llm = judge_llm
+            except Exception:
+                pass
+            
+        
 
-            llm = Ollama(model=ollama_model, base_url=ollama_host)
-        except Exception as e:
-            print(f"⚠  Skipping RAGAS: could not initialize Ollama LLM ({e}).")
-            return {
-                "answer_relevancy": None,
-                "faithfulness": None,
-                "context_recall": None,
-                "context_precision": None,
-                "composite": None,
-            }
+    metrics = [
+        faithfulness,
+        context_recall,
+        context_precision,
+        answer_correctness,
+    ]
 
-    # Some RAGAS metrics use embeddings; provide local HF embeddings to avoid provider defaults.
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBED_MODEL,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
-
-    run_config = None
+    # timeout = per-call limit in seconds (NOT total run time).
+    # 120s is generous for any API judge under concurrent load.
     try:
         from ragas.run_config import RunConfig
-
-        run_config = RunConfig(timeout=300)
+        rc = RunConfig(timeout=120, max_retries=2, max_wait=60)
     except Exception:
-        run_config = None
+        rc = None
 
-    score_obj = evaluate(
-        dataset,
+    eval_kwargs = dict(
+        dataset=dataset,
         metrics=metrics,
-        llm=llm,
-        embeddings=embeddings,
         raise_exceptions=False,
-        batch_size=1,
-        run_config=run_config,
         show_progress=True,
     )
+    if judge_llm is not None:
+        eval_kwargs["llm"]        = judge_llm
+        eval_kwargs["embeddings"] = ragas_embeds
+    if rc is not None:
+        eval_kwargs["run_config"] = rc
 
-    def _mean_metric(value):
-        if value is None:
+    print("[ragas] Running evaluation...")
+    score_obj = evaluate(**eval_kwargs)
+
+    def _safe(key):
+        v = score_obj[key]
+        if v is None:
             return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, list):
-            vals = [float(v) for v in value if isinstance(v, (int, float)) and v == v]
-            return (sum(vals) / len(vals)) if vals else None
+        if isinstance(v, (int, float)):
+            return None if v != v else round(float(v), 4)   # NaN check
+        if isinstance(v, list):
+            vals = [float(x) for x in v if isinstance(x, (int, float)) and x == x]
+            return round(sum(vals) / len(vals), 4) if vals else None
         try:
-            return float(value)
+            f = float(v)
+            return None if f != f else round(f, 4)
         except Exception:
             return None
 
-    answer_rel = _mean_metric(score_obj["answer_relevancy"])
-    faithful   = _mean_metric(score_obj["faithfulness"])
-    recall     = _mean_metric(score_obj["context_recall"])
-    precision  = _mean_metric(score_obj["context_precision"])
-
     scores = {
-        "answer_relevancy":   (round(answer_rel, 4) if answer_rel is not None else None),
-        "faithfulness":       (round(faithful, 4) if faithful is not None else None),
-        "context_recall":     (round(recall, 4) if recall is not None else None),
-        "context_precision":  (round(precision, 4) if precision is not None else None),
+        "faithfulness":      _safe("faithfulness"),
+        "context_recall":    _safe("context_recall"),
+        "context_precision": _safe("context_precision"),
+        "answer_correctness": _safe("answer_correctness"),
     }
+
     present = [v for v in scores.values() if isinstance(v, (int, float))]
     scores["composite"] = round(sum(present) / len(present), 4) if present else None
 
-    print("  RAGAS results:")
+    print("\n[ragas] Results:")
     for k, v in scores.items():
         if isinstance(v, (int, float)):
-            bar = "█" * int(v * 20) + "░" * (20 - int(v * 20))
-            print(f"    {k:<25} {bar} {v:.4f}")
+            bar = "=" * int(v * 20) + "-" * (20 - int(v * 20))
+            print(f"  {k:<25} [{bar}] {v:.4f}")
         else:
-            print(f"    {k:<25} (n/a)")
+            print(f"  {k:<25} n/a  (judge LLM unavailable)")
 
     return scores
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LANGFUSE INTEGRATION
+# LANGFUSE EXPERIMENT LOGGING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def log_experiment_to_langfuse(
-    lf: Langfuse,
+def log_to_langfuse(
+    lf: Optional[Langfuse],
     experiment_name: str,
     config: dict,
     results: list[dict],
     ragas_scores: dict,
-):
-    """
-    Log a full experiment run to Langfuse:
-    - One top-level trace per experiment
-    - One span per Q&A pair
-    - RAGAS scores as numeric scores on the trace
-    """
+) -> Optional[str]:
     if lf is None:
-        return
+        return None
 
-    print(f"\n📡 Logging to Langfuse: {experiment_name}")
-    trace = lf.trace(
-        CreateTrace(
+    print(f"\n[langfuse] Logging experiment: {experiment_name}")
+
+    trace = lf.trace(CreateTrace(
             name=experiment_name,
             metadata={
                 "config":       config,
@@ -537,10 +745,8 @@ def log_experiment_to_langfuse(
         )
     )
 
-    # Log each Q&A as a span
     for i, r in enumerate(results):
-        trace.span(
-            CreateSpan(
+        trace.span(CreateSpan(
                 name=f"qa_{i+1}",
                 input={"question": r["question"]},
                 output={
@@ -555,37 +761,47 @@ def log_experiment_to_langfuse(
             )
         )
 
-    # Log RAGAS scores (CreateScore rejects None; skipped metrics stay in trace metadata only)
     for metric, value in ragas_scores.items():
-        if value is None or not isinstance(value, (int, float)):
-            continue
-        trace.score(
-            CreateScore(
+        if isinstance(value, (int, float)):
+            trace.score(
+                CreateScore(
                 name=metric,
                 value=float(value),
                 comment=f"RAGAS {metric} for experiment '{experiment_name}'",
+                )
             )
-        )
-
     lf.flush()
-    print(f"  ✓ Trace logged → {LANGFUSE_HOST}")
+    print(f"  [langfuse] Trace logged -> {LANGFUSE_HOST}")
     return trace.id
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# EXPERIMENT RUNNER
+# EXPERIMENT GRID
 # ══════════════════════════════════════════════════════════════════════════════
 
 EXPERIMENT_GRID = [
-    # (chunk_size, overlap, top_k, reformulation, label)
-    (1000, 200, 6, True,  "baseline"),
-    (500,  100, 6, True,  "small_chunks"),
-    (2000, 400, 6, True,  "large_chunks"),
-    (1000, 200, 3, True,  "topk_3"),
-    (1000, 200, 10, True, "topk_10"),
-    (1000, 200, 6, False, "no_reformulation"),
+    # BASELINE
+    (1000, 200, 6, False, False, False, False, False, "baseline_topk6"),
+
+    #SEMANTIC RERANKER
+    (1000, 200, 6, False, True, False, False, False, "semantic_reranker"),
+
+    # CROSS-ENCODER
+    (1000, 200, 6, False, False, True, False, False, "cross_encoder"),
+
+    # MULTI-QUERY
+    (1000, 200, 6, False, False, False, True, False, "multiquery"),
+
+    # POST-PROCESSING
+    (1000, 200, 6, False, False, False, False, True, "postprocess"),
+
+    # COMBINATIONS 🔥
+    (1000, 200, 6, False, False, True, True, False, "cross+multi"),
+    (1000, 200, 6, False, False, True, False, True, "cross+post"),
+    (1000, 200, 6, False, False, True, True, True, "full_pipeline"),
 ]
 
+from langfuse.model import CreateGeneration, CreateScore, CreateSpan, CreateTrace
 
 def run_experiment(
     config: tuple,
@@ -593,30 +809,43 @@ def run_experiment(
     eval_rows: list[dict],
     lf: Optional[Langfuse],
 ) -> dict:
-    """Run one experiment configuration and return results + scores."""
-    chunk_size, overlap, top_k, use_reform, label = config
-    print(f"\n{'─'*60}")
-    print(f"🧪 Experiment: {label}")
-    print(f"   chunk={chunk_size}, overlap={overlap}, top_k={top_k}, reform={use_reform}")
-
+    (
+        chunk_size,
+        overlap,
+        top_k,
+        use_reform,
+        use_reranker,
+        use_cross_encoder,
+        use_multiquery,
+        use_postprocessing,
+        label
+    ) = config
+    print(f"\n{'='*65}")
+    print(f"EXPERIMENT: {label}")
+    print(f"  chunk={chunk_size}  overlap={overlap}  top_k={top_k}  reform={use_reform}")
+    print(f"  reranker={use_reranker}  cross_encoder={use_cross_encoder}  multiquery={use_multiquery}  postprocess={use_postprocessing}")
+    print("="*65)
     pipeline = RAGPipeline(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
         top_k=top_k,
         use_reformulation=use_reform,
+        use_reranker=use_reranker,
+        use_cross_encoder=use_cross_encoder,
+        use_multiquery=use_multiquery,
+        use_postprocessing=use_postprocessing,
     )
-    pipeline.ingest_text(corpus_text, source="corpus")
+    pipeline.ingest_text(corpus_text)
 
     results = []
-    for row in eval_rows:
+    for idx, row in enumerate(eval_rows):
         question     = row["question"]
         ground_truth = row["ground_truth"]
 
-        # Create a per-question Langfuse trace
+        # Per-question Langfuse trace
         lf_trace = None
         if lf:
-            lf_trace = lf.trace(
-                CreateTrace(
+            lf_trace = lf.trace(CreateTrace(
                     id=f"{label}-{question[:20]}",
                     name=f"{label}: {question[:80]}",
                     input=question,
@@ -631,15 +860,10 @@ def run_experiment(
         result = pipeline.query(question, trace=lf_trace)
         result["ground_truth"] = ground_truth
         results.append(result)
+        
 
-        print(f"  Q: {question[:70]}…")
-        print(f"  A: {result['answer'][:120]}…\n")
-
-    # RAGAS evaluation
     ragas_scores = run_ragas(results)
 
-    # Log experiment summary to Langfuse
-    experiment_name = f"novamind-rag-{label}-{datetime.date.today()}"
     config_dict = {
         "chunk_size": chunk_size,
         "overlap":    overlap,
@@ -647,7 +871,13 @@ def run_experiment(
         "reform":     use_reform,
         "label":      label,
     }
-    trace_id = log_experiment_to_langfuse(lf, experiment_name, config_dict, results, ragas_scores)
+    trace_id = log_to_langfuse(
+        lf,
+        f"novamind-{label}-{datetime.date.today()}",
+        config_dict,
+        results,
+        ragas_scores,
+    )
 
     return {
         "label":        label,
@@ -659,31 +889,30 @@ def run_experiment(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
+# I/O HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_eval_csv(path: str) -> list[dict]:
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
+        for row in csv.DictReader(f):
             rows.append({
                 "question":     row["question"].strip(),
                 "ground_truth": row["ground_truth"].strip(),
             })
-    print(f"✓ Loaded {len(rows)} evaluation questions from {path}")
+    print(f"[csv] Loaded {len(rows)} evaluation questions from {path}")
     return rows
 
 
 def save_results(all_experiments: list[dict], out_dir: str = "."):
-    """Save summary CSV + full JSON."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs(out_dir, exist_ok=True)
 
-    # JSON dump
+    # Full JSON
     json_path = os.path.join(out_dir, f"rag_eval_results_{ts}.json")
     with open(json_path, "w") as f:
         json.dump(all_experiments, f, indent=2, default=str)
-    print(f"\n💾 Full results → {json_path}")
+    print(f"\nFull results -> {json_path}")
 
     # Summary CSV
     csv_path = os.path.join(out_dir, f"rag_eval_summary_{ts}.csv")
@@ -692,87 +921,86 @@ def save_results(all_experiments: list[dict], out_dir: str = "."):
         row = {"experiment": exp["label"], **exp["config"], **exp["ragas_scores"]}
         rows.append(row)
     pd.DataFrame(rows).to_csv(csv_path, index=False)
-    print(f"💾 Summary CSV  → {csv_path}")
+    print(f"Summary CSV  -> {csv_path}")
 
-    # Console comparison table
-    print("\n" + "═" * 90)
-    print(f"{'EXPERIMENT':<22} {'RELEVANCY':>10} {'FAITHFUL':>10} {'RECALL':>10} {'PRECISION':>10} {'COMPOSITE':>10}")
-    print("─" * 90)
-    def _fmt(v):
-        if isinstance(v, (int, float)):
-            return f"{v:>10.4f}"
-        return f"{'n/a':>10}"
+    # Console table
+    H = ["EXPERIMENT", "FAITHFUL", "RECALL", "PRECISION", "CORRECTNESS", "COMPOSITE"]
+    print("\n" + "="*95)
+    print(f"{H[0]:<22} {H[1]:>10} {H[2]:>8} {H[3]:>10} {H[4]:>12} {H[5]:>10}")
+    print("-"*95)
+
+    def _f(v):
+        return f"{v:>10.4f}" if isinstance(v, (int, float)) else f"{'n/a':>10}"
 
     for exp in all_experiments:
         s = exp["ragas_scores"]
         print(
-            f"{exp['label']:<22} "
-            f"{_fmt(s.get('answer_relevancy'))} "
-            f"{_fmt(s.get('faithfulness'))} "
-            f"{_fmt(s.get('context_recall'))} "
-            f"{_fmt(s.get('context_precision'))} "
-            f"{_fmt(s.get('composite'))}"
+            f"{exp['label']:<22}"
+            f"{_f(s.get('faithfulness'))}"
+            f"{_f(s.get('context_recall'))}"
+            f"{_f(s.get('context_precision'))}"
+            f"{_f(s.get('answer_correctness'))}"
+            f"{_f(s.get('composite'))}"
         )
-    print("═" * 90)
+    print("="*95)
 
-    # Best config (only among runs with a numeric composite)
-    with_scores = [e for e in all_experiments if isinstance(e["ragas_scores"].get("composite"), (int, float))]
-    if with_scores:
-        best = max(with_scores, key=lambda e: e["ragas_scores"]["composite"])
-        c = best["ragas_scores"]["composite"]
-        print(f"\n🏆 Best config: {best['label']}  (composite={c:.4f})")
+    scoreable = [e for e in all_experiments if isinstance(e["ragas_scores"].get("composite"), (int, float))]
+    if scoreable:
+        best = max(scoreable, key=lambda e: e["ragas_scores"]["composite"])
+        print(f"\nBest config: {best['label']}  composite={best['ragas_scores']['composite']:.4f}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+from pathlib import Path
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+
+def load_corpus(file_path: str) -> str:
+    """Load text from PDF or TXT, return a single string."""
+    path = Path(file_path)
+    if path.suffix.lower() == '.pdf':
+        loader = PyPDFLoader(str(path))
+        pages = loader.load()
+        # Concatenate all page texts
+        return "\n".join(page.page_content for page in pages)
+    elif path.suffix.lower() == '.txt':
+        return path.read_text(encoding="utf-8")
     else:
-        print("\n🏆 Best config: (no composite scores available)")
-
+        raise ValueError(f"Unsupported file type: {path.suffix}. Use .pdf or .txt")
 
 def main():
     parser = argparse.ArgumentParser(description="NovaMind RAG Evaluator")
-    parser.add_argument("--experiment", choices=["all", "single"], default="all",
-                        help="Run all grid experiments or just the baseline")
-    parser.add_argument("--csv",  default="eval_dataset.csv",
-                        help="Path to evaluation CSV")
-    parser.add_argument("--doc",  default=None,
-                        help="Path to a .txt or .pdf to index (otherwise uses built-in corpus)")
-    parser.add_argument("--out",  default=".", help="Output directory for result files")
+    parser.add_argument("--experiment", choices=["all", "single"], default="all")
+    parser.add_argument("--csv",  default="eval_dataset.csv")
+    parser.add_argument("--doc",  default=None, help=".txt or .pdf to index")
+    parser.add_argument("--out",  default=".",  help="output directory")
     args = parser.parse_args()
 
-    print("╔══════════════════════════════════════════════╗")
-    print("║   NovaMind RAG Evaluation Harness            ║")
-    print("║   RAGAS + Langfuse + Experiment Grid         ║")
-    print("╚══════════════════════════════════════════════╝\n")
+    print("NovaMind RAG Evaluation Harness  (RAGAS + Langfuse)")
+    print("="*55)
 
-    # Load corpus
     if args.doc:
-        corpus_text = Path(args.doc).read_text(encoding="utf-8")
-        print(f"✓ Using document: {args.doc}")
+        corpus_text = load_corpus(args.doc)
+        print(f"Loaded corpus from {args.doc} ({len(corpus_text)} characters)")
     else:
-        corpus_text = BUILTIN_CORPUS
-        print("✓ Using built-in ML corpus")
+        corpus_text = BUILTIN_CORPUS  # your hardcoded fallback
+        print("Using built-in ML corpus")
 
-    # Load eval data
     eval_rows = load_eval_csv(args.csv)
-
-    # Langfuse
-    lf = get_langfuse()
-
-    # Experiments to run
-    if args.experiment == "single":
-        grid = [EXPERIMENT_GRID[0]]  # baseline only
-    else:
-        grid = EXPERIMENT_GRID
+    lf        = get_langfuse()
+    grid      = [EXPERIMENT_GRID[0]] if args.experiment == "single" else EXPERIMENT_GRID
 
     all_results = []
     for config in grid:
-        exp_result = run_experiment(config, corpus_text, eval_rows, lf)
-        all_results.append(exp_result)
+        all_results.append(run_experiment(config, corpus_text, eval_rows, lf))
 
-    # Save
-    os.makedirs(args.out, exist_ok=True)
     save_results(all_results, out_dir=args.out)
 
     if lf:
         lf.flush()
-        print(f"\n✅ All traces flushed to Langfuse → {LANGFUSE_HOST}")
+        print(f"\nAll traces flushed to Langfuse -> {LANGFUSE_HOST}")
 
 
 if __name__ == "__main__":
