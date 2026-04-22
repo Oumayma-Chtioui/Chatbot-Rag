@@ -29,6 +29,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+from langchain_ollama import ChatOllama
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -58,8 +59,8 @@ LANGFUSE_PUBLIC_KEY="pk-lf-288b8bdd-2abd-4196-b009-55b7208666b6"
 LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 LANGFUSE_HOST        = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
-EMBED_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
-JUDGE_MODEL  = "mistral-small-latest"   # fast + cheap, good enough as RAGAS judge
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # for both RAG and RAGAS (keep consistent for fair eval)
+JUDGE_MODEL  = "mistral-small-latest"   
 GEN_MODEL    = "mistral-small-latest"   # generation model
 
 # ── LangChain / FAISS ─────────────────────────────────────────────────────────
@@ -182,6 +183,30 @@ def get_ragas_judge():
     Priority: Mistral → OpenRouter → None
     Uses LangchainLLMWrapper with ChatMistralAI (langchain_mistralai).
     """
+    try:
+        # ── 1. Ollama with retries ─────────────────────────────────────
+        max_retries = 5
+        from ragas.llms import llm_factory, LangchainLLMWrapper
+        for attempt in range(max_retries):
+            try:
+                raw = ChatOllama(
+                model="llama3.2:latest",
+                temperature=0.2,
+                )
+                # Sync smoke-test
+                raw.invoke("Reply with one word: ok")
+                wrapped = LangchainLLMWrapper(raw)
+                print(f"  [judge] Ollama llama3.2:latest ready (LangchainLLMWrapper)")
+                return wrapped
+            except Exception as e:
+                print(f"  [gen] Ollama attempt {attempt + 1}/{max_retries} failed ({e})")
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # wait before retry
+
+
+        
+    except Exception as e:
+        print(f"  [judge] Ollama failed ({e}), trying Mistral...")
 
     # ── Option 1: Mistral via LangchainLLMWrapper ─────────────────────────
     if MISTRAL_API_KEY:
@@ -311,7 +336,7 @@ def generate_with_ollama(system_prompt: str, question: str) -> str:
     from langchain_community.chat_models import ChatOllama
 
     llm = ChatOllama(
-        model="llama3.2:1b",
+        model="llama3.2:latest",
         temperature=0.2,
     )
 
@@ -320,28 +345,30 @@ def generate_with_ollama(system_prompt: str, question: str) -> str:
     ).content.strip()
 
 def generate_answer(system_prompt: str, question: str) -> str:
-    # ── 1. Ollama (llama3.2:1b) ────────────────────────────────────
-    try:
-        return generate_with_ollama(system_prompt, question)
-    except Exception as e:
-        print(f"  [gen] Ollama failed ({e})")
-            
-
-    # ── 2. Mistral ─────────────────────────────────
+    # ── 1. Mistral  ────────────────────────────────────
     if MISTRAL_API_KEY:
         try:
-            return generate_with_mistral(system_prompt, question)
+            llm = "mistral-small-latest"
+            answer = generate_with_mistral(system_prompt, question)
+            return answer,llm
         except Exception as e:
             print(f"  [gen] Mistral failed ({e}), trying OpenRouter...")
-            
-
+    # ── 2. Ollama (llama3.2:latest) ─────────────────────────────────
+    try:
+        llm="llama3.2:latest"
+        answer = generate_with_ollama(system_prompt, question)
+        return answer,llm
+    except Exception as e:
+        print(f"  [gen] Ollama failed ({e}), trying OpenRouter...")
     # ── 3. OpenRouter ──────────────────────────
     try:
-        return generate_with_openrouter(system_prompt, question)
+        llm="stepfun/step-3.5-flash:free"
+        answer = generate_with_openrouter(system_prompt, question)
+        return answer,llm
     except Exception as e:
             print(f"  [gen] OpenRouter failed ({e}), trying Ollama...")
 
-    return "ERROR: No LLM available for generation."
+    return "ERROR: No LLM available for generation.",""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -413,7 +440,20 @@ class RAGPipeline:
             chunk_overlap=self.chunk_overlap,
             separators=["\n\n", "\n", ". ", " ", ""],
         )
-        chunks = splitter.create_documents([text], metadatas=[{"source": source}])
+        raw_chunks = splitter.create_documents([text], metadatas=[{"source": source}])
+        chunks = []
+        #Parent document retrieval
+        for i, chunk in enumerate(raw_chunks):
+            parent_id = i // 3  # group 3 chunks per parent
+            chunk.metadata["parent_id"] = parent_id
+            window_size = 1  # number of chunks per parent
+            start = max(0, i - window_size)
+            end   = min(len(raw_chunks), i + window_size)
+            parent_text = " ".join(
+                raw_chunks[j].page_content for j in range(start, end)
+            )
+            chunk.metadata["parent_text"] = parent_text
+            chunks.append(chunk)
         self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
         print(f"  indexed {len(chunks)} chunks from '{source}'")
         return len(chunks)
@@ -446,39 +486,56 @@ class RAGPipeline:
         except Exception:
             return question
 
-    def retrieve(self, question: str, lf_trace=None) -> tuple[str, list[str]]:
+    def retrieve(self, question: str, lf: Optional[Langfuse] = None) -> tuple[str, list[str]]:
         if self.vectorstore is None:
             raise RuntimeError("Call ingest_text() first.")
 
         effective = self._reformulate(question) if self.use_reformulation else question
         queries = self.generate_queries(question)
 
+        # After similarity_search, collect raw docs (not parent_text yet)
         all_docs = []
         for q in queries:
-            docs = self.vectorstore.similarity_search(q, k=10)
+            docs = self.vectorstore.max_marginal_relevance_search(q, k=10, fetch_k=20, lambda_mult=0.7)            
             all_docs.extend(docs)
 
-        # deduplicate
-        contexts = list({d.page_content: d for d in all_docs}.values())
-        contexts = [d.page_content for d in contexts] 
+        # Deduplicate by chunk index
+        seen = {}
+        for d in all_docs:
+            idx = d.metadata.get("parent_id")
+            if idx not in seen:
+                seen[idx] = d
+
+        # Rerank on raw chunk content first
+        candidates = list(seen.values())
+        raw_texts = [d.page_content for d in candidates]
 
         if self.use_cross_encoder:
-            contexts = rerank_cross_encoder(effective, contexts, self.reranker, top_k=self.top_k)
-
+            raw_texts = rerank_cross_encoder(effective, raw_texts, self.reranker, top_k=self.top_k)
+            # Now expand winners to parent_text
+            contexts = []
+            for d in candidates:
+                if d.page_content in raw_texts:
+                    contexts.append(d.metadata.get("parent_text", d.page_content))
         elif self.use_reranker:
-            contexts = rerank_contexts(effective, contexts, self.embeddings, top_k=self.top_k)
-
+            raw_texts = rerank_contexts(effective, raw_texts, self.embeddings, top_k=self.top_k)
+            contexts = []
+            for d in candidates:
+                if d.page_content in raw_texts:
+                    contexts.append(d.metadata.get("parent_text", d.page_content))
         else:
-            contexts = contexts[:self.top_k]
+            contexts = [d.metadata.get("parent_text", d.page_content) for d in candidates[:self.top_k]]
 
-        if lf_trace:
-            lf_trace.span(CreateSpan(
-                    name="retrieval",
-                    input={"query": question, "reformulated": effective},
-                    output={"chunks_retrieved": len(contexts), "contexts": contexts[:2]},
-                    metadata={"top_k": self.top_k, "reformulation": self.use_reformulation},
-                )
-            )
+        if lf:
+            # Child span under the current trace/observation context (if any).
+            with lf.start_as_current_observation(
+                as_type="span",
+                name="retrieval",
+                input={"query": question, "reformulated": effective},
+                output={"chunks_retrieved": len(contexts), "contexts": contexts[:2]},
+                metadata={"top_k": self.top_k, "reformulation": self.use_reformulation},
+            ):
+                pass
 
         return effective, contexts
 
@@ -500,60 +557,46 @@ class RAGPipeline:
         """
         t0 = time.time()
         effective_query, contexts = self.retrieve(question, trace)
+        
         answer = self.generate(question, contexts, trace)
         latency = round(time.time() - t0, 3)
 
         return {
-            "question":       question,
-            "answer":         answer,
-            "contexts":       contexts,
+            "question": question,
+            "answer": answer,
+            "contexts": contexts,
             "effective_query": effective_query,
-            "latency_s":      latency,
+            "latency_s": latency,
         }
 
     # ── generate ──────────────────────────────────────────────────────────
 
-    def generate(self, question: str, contexts: list[str], lf_trace=None) -> str:
+    def generate(self, question: str, contexts: list[str], lf: Optional[Langfuse] = None) -> str:
         context_block = "\n\n---\n\n".join(contexts)
-        system_prompt = textwrap.dedent(f"""You are a strict question-answering system.
-
-Your task is to extract the exact answer to the question from the context.
-
-Rules:
-- Answer ONLY using the provided context
-- Do NOT add any external knowledge
-- If the answer is not explicitly in the context, say:
-  "I don't have enough information to answer this."
-- Answer the question directly and precisely
-- Do NOT provide general explanations
-- Prefer short, exact answers 
-- If multiple possible answers exist, choose the most relevant one to the question.
-
+        system_prompt = textwrap.dedent( f"""You are a helpful assistant.
+Answer the question based on the provided context.
+Synthesize and summarize relevant information even if it's spread across multiple parts.
+Be clear and concise.
+If the context contains no relevant information at all, say: "I don't have enough information to answer this."
 
 Context:
-{context_block}
-
-Question:
-{question}
-
-Answer:""").strip()
+{context_block}""").strip()
         full_prompt = f"{system_prompt}\n\nQuestion:\n{question}"
         t0     = time.time()
-        answer = generate_answer(system_prompt, question)
+        answer, model = generate_answer(system_prompt, question)
         answer = self.postprocess(answer, question)
         lat    = round(time.time() - t0, 3)
         output = answer if isinstance(answer, str) else str(answer)
-        if lf_trace:
-            lf_trace.generation(
-                CreateGeneration(
-                    id=f"gen-{int(time.time()*1000)}",
-                    name="llm-generation",
-                    model= "llama3.2:1b",
-                    input=full_prompt,
-                    output=output,
-                    metadata={"latency_s": lat, "context_chunks": len(contexts)},
-                )
-            )
+        if lf:
+            # Generation observation under the current trace/observation context (if any).
+            with lf.start_as_current_observation(
+                as_type="generation",
+                name="llm-generation",
+                model=model,
+                input=question,
+                metadata={"latency_s": lat, "context_chunks": len(contexts)},
+            ):
+                lf.update_current_generation(output=output)
         return answer
     def overlap_score(self, q, s):
         q_words = set(q.lower().split())
@@ -732,47 +775,48 @@ def log_to_langfuse(
 
     print(f"\n[langfuse] Logging experiment: {experiment_name}")
 
-    trace = lf.trace(CreateTrace(
-            name=experiment_name,
-            metadata={
-                "config":       config,
-                "ragas_scores": ragas_scores,
-                "n_questions":  len(results),
-                "timestamp":    datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                # langfuse==1.14.0 doesn't accept trace tags directly; store them in metadata.
-                "tags":         ["rag-eval", "novamind"],
-            },
-        )
-    )
+    trace_id = lf.create_trace_id()
+    with lf.start_as_current_observation(
+        as_type="span",
+        name=experiment_name,
+        metadata={
+            "config": config,
+            "ragas_scores": ragas_scores,
+            "n_questions": len(results),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "tags": ["rag-eval", "novamind"],
+        },
+    ): 
+        trace_id=trace_id,
 
-    for i, r in enumerate(results):
-        trace.span(CreateSpan(
+        for i, r in enumerate(results):
+            with lf.start_as_current_observation(
+                as_type="span",
                 name=f"qa_{i+1}",
                 input={"question": r["question"]},
                 output={
-                    "answer":   r["answer"],
-                    "contexts": r["contexts"][:1],   # first context only to save space
+                    "answer": r["answer"],
+                    "contexts": r["contexts"][:1],  # first context only to save space
                 },
                 metadata={
                     "effective_query": r.get("effective_query", ""),
-                    "latency_s":       r.get("latency_s", 0),
-                    "ground_truth":    r.get("ground_truth", ""),
+                    "latency_s": r.get("latency_s", 0),
+                    "ground_truth": r.get("ground_truth", ""),
                 },
-            )
-        )
+            ):
+                pass
 
-    for metric, value in ragas_scores.items():
-        if isinstance(value, (int, float)):
-            trace.score(
-                CreateScore(
-                name=metric,
-                value=float(value),
-                comment=f"RAGAS {metric} for experiment '{experiment_name}'",
+        for metric, value in ragas_scores.items():
+            if isinstance(value, (int, float)):
+                lf.score_current_trace(
+                    name=metric,
+                    value=float(value),
+                    data_type="NUMERIC",
+                    comment=f"RAGAS {metric} for experiment '{experiment_name}'",
                 )
-            )
     lf.flush()
     print(f"  [langfuse] Trace logged -> {LANGFUSE_HOST}")
-    return trace.id
+    return trace_id
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -780,28 +824,47 @@ def log_to_langfuse(
 # ══════════════════════════════════════════════════════════════════════════════
 
 EXPERIMENT_GRID = [
-    # BASELINE
-    (1000, 200, 6, False, False, False, False, False, "baseline_topk6"),
+    # topk6
+    (1000, 200, 6, False, False, False, False, False, "top_k=6"),
 
-    #SEMANTIC RERANKER
-    (1000, 200, 6, False, True, False, False, False, "semantic_reranker"),
+    # topk4
+    (1000, 200, 4, False, False, False, False, False, "top_k=4"),
 
-    # CROSS-ENCODER
-    (1000, 200, 6, False, False, True, False, False, "cross_encoder"),
+    #topk10
+    (1000, 200, 10, False, False, False, False, False, "top_k=10"),
 
-    # MULTI-QUERY
-    (1000, 200, 6, False, False, False, True, False, "multiquery"),
+    # topk3
+    (1000, 200, 3, False, False, False, False, False, "top_k=3"),
 
-    # POST-PROCESSING
-    (1000, 200, 6, False, False, False, False, True, "postprocess"),
+    # #SEMANTIC RERANKER
+    # (1000, 200, 6, False, True, False, False, False, "semantic_reranker"),
 
-    # COMBINATIONS 🔥
-    (1000, 200, 6, False, False, True, True, False, "cross+multi"),
-    (1000, 200, 6, False, False, True, False, True, "cross+post"),
-    (1000, 200, 6, False, False, True, True, True, "full_pipeline"),
+    # # CROSS-ENCODER
+    # (1000, 200, 6, False, False, True, False, False, "cross_encoder"),
+
+    # # MULTI-QUERY
+    # (1000, 200, 6, False, False, False, True, False, "multiquery"),
+
+    # # POST-PROCESSING
+    # (1000, 200, 6, False, False, False, False, True, "postprocess"),
+
+    # # COMBINATIONS 🔥
+    # (1000, 200, 6, False, False, True, True, False, "cross+multi"),
+    # (1000, 200, 6, False, False, True, False, True, "cross+post"),
+    # (1000, 200, 6, False, False, True, True, True, "full_pipeline"),
+
+    # (1000, 200, 4, False, False, True, True, False, "parent_doc_rerank"),
 ]
 
-from langfuse.model import CreateGeneration, CreateScore, CreateSpan, CreateTrace
+# EXPERIMENT_GRID = [
+#     # (chunk_size, overlap, top_k, reformulation, label)
+#     (1000, 200, 6, True,  "baseline"),
+#     (500,  100, 6, True,  "small_chunks"),
+#     (2000, 400, 6, True,  "large_chunks"),
+#     (1000, 200, 3, True,  "topk_3"),
+#     (1000, 200, 10, True, "topk_10"),
+#     (1000, 200, 6, False, "no_reformulation"),
+# ]
 
 def run_experiment(
     config: tuple,
@@ -842,25 +905,31 @@ def run_experiment(
         question     = row["question"]
         ground_truth = row["ground_truth"]
 
-        # Per-question Langfuse trace
-        lf_trace = None
+        # Per-question Langfuse trace (v4+ observation model)
         if lf:
-            lf_trace = lf.trace(CreateTrace(
-                    id=f"{label}-{question[:20]}",
-                    name=f"{label}: {question[:80]}",
-                    input=question,
-                    metadata={
-                        "experiment": label,
-                        "ground_truth": ground_truth,
-                        "tags": ["rag-eval", label],
-                    },
-                )
-            )
+            trace_id = lf.create_trace_id()
+            with lf.start_as_current_observation(
+                as_type="span",
+                name=f"{label}: {question[:80]}",
+                input={"question": question},
+                metadata={
+                    "experiment": label,
+                    "ground_truth": ground_truth,
+                    "tags": ["rag-eval", label],
+                },
+            ):
+                result = pipeline.query(question, lf)
+                trace_id = lf.get_current_trace_id()
 
-        result = pipeline.query(question, trace=lf_trace)
+            result["langfuse_trace_id"] = trace_id
+        else:
+            result = pipeline.query(question, lf=None)
         result["ground_truth"] = ground_truth
         results.append(result)
         
+    latencies = [r["latency_s"] for r in results]
+    p95_latency = float(np.percentile(latencies, 95))
+    print(f"  p95 latency: {p95_latency:.3f}s")
 
     ragas_scores = run_ragas(results)
 
@@ -885,6 +954,7 @@ def run_experiment(
         "ragas_scores": ragas_scores,
         "results":      results,
         "trace_id":     trace_id,
+        "p95_latency": p95_latency,
     }
 
 
