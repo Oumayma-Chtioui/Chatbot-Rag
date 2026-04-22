@@ -1,21 +1,21 @@
-question,ground_truth,document_hint
-What is supervised learning?,Supervised learning is a type of machine learning where the algorithm learns from labeled training data to make predictions on new unseen data.,CS229
-What are the two main types of supervised learning tasks?,The two main types are regression (predicting continuous values) and classification (predicting discrete categories).,CS229
-What is gradient descent?,Gradient descent is an optimization algorithm that iteratively adjusts parameters in the direction of the negative gradient of the loss function to minimize it.,CS229
-What is the cost function in linear regression?,The cost function in linear regression is the mean squared error (MSE) which measures the average squared difference between predicted and actual values.,CS229
-What is overfitting in machine learning?,Overfitting occurs when a model learns the training data too well including its noise and random fluctuations resulting in poor generalization to new unseen data.,CS229
-What is regularization and why is it used?,Regularization is a technique that adds a penalty term to the loss function to discourage complex models and reduce overfitting by constraining the model parameters.,CS229
-What is the difference between L1 and L2 regularization?,L1 regularization adds the absolute value of weights as penalty encouraging sparsity while L2 regularization adds the squared value of weights encouraging small but non-zero weights.,CS229
-What is a neural network?,A neural network is a computational model inspired by the human brain consisting of interconnected layers of nodes (neurons) that learn to transform inputs into outputs through training.,CS229
-What is backpropagation?,Backpropagation is the algorithm used to train neural networks by computing gradients of the loss with respect to each parameter using the chain rule and propagating errors backwards through the network.,CS229
-What is the vanishing gradient problem?,The vanishing gradient problem occurs in deep neural networks when gradients become extremely small during backpropagation making it difficult for early layers to learn effectively.,CS229
-What is a support vector machine?,A support vector machine (SVM) is a supervised learning algorithm that finds the optimal hyperplane that maximally separates classes in feature space.,CS229
-What is cross-validation?,Cross-validation is a technique to assess model generalization by splitting data into multiple folds training on some folds and testing on the held-out fold repeating for all combinations.,CS229
-What is the bias-variance tradeoff?,The bias-variance tradeoff describes the tension between a model's ability to fit training data (low bias) and its ability to generalize to new data (low variance) as model complexity changes.,CS229
-What is a decision tree?,A decision tree is a supervised learning algorithm that splits data recursively based on feature thresholds creating a tree structure where leaves represent predictions.,CS229
-What is ensemble learning?,Ensemble learning combines multiple individual models to produce better predictive performance than any single model alone through techniques like bagging boosting or stacking.,CS229
-What is principal component analysis (PCA)?,PCA is an unsupervised dimensionality reduction technique that transforms data into a new coordinate system where axes (principal components) capture maximum variance.,CS229
-What is the k-nearest neighbors algorithm?,KNN is a non-parametric algorithm that classifies a new point by looking at the k closest training examples in feature space and taking a majority vote.,CS229
-What is a confusion matrix?,A confusion matrix is a table that summarizes classification performance showing true positives false positives true negatives and false negatives.,CS229
-What is precision and recall?,Precision is the fraction of predicted positives that are actually positive while recall is the fraction of actual positives that were correctly predicted.,CS229
-What is the F1 score?,The F1 score is the harmonic mean of precision and recall providing a single metric that balances both measures especially useful for imbalanced datasets.,CS229
+question,ground_truth
+Quel est l'objectif principal du Sprint 1 ?,L'objectif du Sprint 1 est la collecte et le stockage des données dans une base de données vectorielle.
+Quelles sont les sources de données utilisées pour construire la base de connaissances ?,"Les sources de données sont le site officiel de la Faculté des Sciences de Monastir, le site Salima, et des documents PDF contenant des informations sur la scolarité."
+Quel outil a été utilisé pour diviser le texte en segments ?,"RecursiveCharacterTextSplitter du package LangChain, avec chunk_size=700 et chunk_overlap=100."
+Quel modèle d'embedding a été choisi et pourquoi ?,"Le modèle HIT-TMG/KaLM-embedding-multilingual-mini-instruct-v1.5 a été choisi car il est multilingue, adapté à une tâche de retrieval, et peu coûteux en ressources."
+Où sont stockés les embeddings ?,"Les embeddings sont stockés dans une base de données vectorielle ChromaDB, initialisée en mode persistant."
+Quel est l'objectif du Sprint 2 ?,L'objectif du Sprint 2 est l'implémentation du pipeline RAG qui constitue le noyau fonctionnel du chatbot.
+Quel LLM a été sélectionné pour la chaîne RAG et pourquoi ?,"GPT-3.5 Turbo a été sélectionné pour son architecture decoder-only, ses temps de latence raisonnables, l'absence de dépendance aux ressources locales, et sa qualité de réponse élevée."
+Quelle méthode de recherche a été utilisée pour le retriever et quels sont ses paramètres ?,"La méthode MMR (Maximal Marginal Relevance) avec les paramètres k=6 et lambda_mult=0.25."
+Quel modèle est utilisé pour la classification des requêtes utilisateur ?,"Le modèle zero-shot classifier facebook/BART-large-mnli, qui fonctionne en deux étapes : détecter si la requête est générale, puis vérifier si elle concerne le domaine universitaire."
+Quel est le mécanisme de fallback mis en place dans le Sprint 3 ?,"Quand le chatbot ne trouve pas de réponse, il envoie la question par email à un responsable administratif via Gmail en utilisant les protocoles SMTP et TLS. La réponse est ensuite transmise à l'étudiant."
+Quelles métriques d'évaluation ont été utilisées dans le Sprint 4 ?,"Correctness, Answer Relevance, Groundedness, et Retrieval Relevance, évaluées via LangSmith."
+Quel modèle a été choisi comme juge pour l'évaluation et pourquoi ?,"GPT-4o-mini a été choisi comme juge car il est différent du LLM utilisé dans la RAGChain (pour une évaluation plus fiable) et offre un coût réduit par million de tokens."
+Quelle interface utilisateur a été développée pour le chatbot et avec quel outil ?,"Une interface web conviviale a été développée avec Gradio, accessible via un navigateur, permettant la saisie de questions et l'affichage des réponses."
+Comment le chatbot vérifie-t-il l'identité de l'étudiant ?,"Le chatbot demande l'adresse e-mail de l'étudiant, envoie un code de vérification via Gmail, et l'étudiant doit saisir ce code dans le chatbot pour valider son identité."
+Quelle méthode de déploiement a été choisie et pourquoi ?,"La méthode 2 via Gradio avec launch(share=True) générant un lien temporaire valide une semaine, car elle est gratuite et adaptée à la phase de test."
+Quelle est la différence entre RAG et Fine-Tuning selon le rapport ?,"RAG est idéal pour des données évolutives, avec des coûts de maintenance faibles. Le Fine-Tuning nécessite un réentraînement à chaque changement de données et a des coûts initiaux plus élevés, mais offre des réponses plus rapides et cohérentes."
+Quelle méthodologie de gestion de projet a été adoptée ?,La méthode SCRUM (Agile) a été adoptée pour sa capacité d'adaptation aux besoins évolutifs et sa collaboration efficace.
+Quels sont les besoins fonctionnels du chatbot ?,"Répondre aux questions des étudiants sur la scolarité, proposer une redirection vers un responsable administratif en cas d'absence de réponse, mettre à jour la base de données, et supporter plusieurs langues."
+Combien de questions ont été sélectionnées pour le jeu de test d'évaluation ?,12 questions ont été sélectionnées pour le jeu de test.
+Quel outil a été utilisé pour automatiser l'envoi quotidien des réponses aux étudiants ?,"PythonAnywhere a été utilisé pour exécuter le script une fois par jour à une heure spécifique, afin d'envoyer les réponses récupérées depuis la boîte mail du chatbot."
