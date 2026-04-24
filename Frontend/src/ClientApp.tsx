@@ -3,13 +3,12 @@ import ClientLogin from "./ClientLogin";
 import ClientDashboard from "./ClientDashboard";
 import ClientDocuments from "./ClientDocuments";
 import ClientWidget from "./ClientWidget";
-import ClientAnalytics from "./ClientAnalytics";
 import ClientFeedback from "./ClientFeedback";
 import "./client-style.css";
 import ClientTickets from "./ClientTickets";
 import { useTheme } from "./UseTheme";
 
-export type ClientPage = "dashboard" | "documents" | "widget" | "analytics" | "feedback" | "tickets";
+export type ClientPage = "dashboard" | "documents" | "widget" |  "feedback" | "tickets";
 
 export interface ClientUser {
   id: number;
@@ -92,7 +91,6 @@ export default function ClientApp() {
             ["dashboard",  "▦", "Dashboard"],
             ["documents",  "◈", "Documents"],
             ["widget",     "◎", "Widget"],
-            ["analytics",  "◉", "Analytics"],
             ["feedback",   "✦", "Feedback"],
             ["tickets",    "✉", "Tickets"],
           ] as [ClientPage, string, string][]).map(([p, icon, label]) => (
@@ -142,7 +140,6 @@ export default function ClientApp() {
         {page === "dashboard"  && bot && <ClientDashboard bot={bot} />}
         {page === "documents"  && bot && <ClientDocuments bot={bot} />}
         {page === "widget"     && bot && <ClientWidget bot={bot} setBot={setBot} user={user} />}
-        {page === "analytics"  && bot && <ClientAnalytics bot={bot} />}
         {page === "feedback"   && bot && <ClientFeedback bot={bot} />}
         {page === "tickets"    && <ClientTickets />}
       </main>

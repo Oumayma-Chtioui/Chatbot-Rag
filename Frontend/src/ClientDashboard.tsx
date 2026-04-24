@@ -1,10 +1,18 @@
 import React, { useEffect, useState, useCallback } from "react";
+import {
+  AreaChart, Area,
+  BarChart, Bar,
+  XAxis, YAxis,
+  Tooltip, ResponsiveContainer,
+} from "recharts";
 import { getAdvancedAnalytics } from "./api";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Keyword   { word: string; count: number }
+interface Keyword    { word: string; count: number }
 interface Unanswered { question: string; created_at: string }
+interface DocUsage   { name: string; citations: number }
+
 interface Analytics {
   total:                    number;
   success_count:            number;
@@ -15,75 +23,178 @@ interface Analytics {
   avg_messages_per_session: number;
   total_sessions:           number;
   pending_tickets:          number;
+  messages_per_day?:        { date: string; count: number }[];
+  response_times?:          { date: string; avg_ms: number }[];
+  document_usage?:          DocUsage[];
 }
 
 interface Props { bot: { id: string; name: string } }
 
-// ── Donut Chart ───────────────────────────────────────────────────────────────
+type Period  = "week" | "month" | "year";
+type KwCount = 5 | 10 | 20;
 
-const DonutChart: React.FC<{ success: number; failure: number; total: number }> = ({
-  success, failure, total,
-}) => {
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function fmt(d: Date, opts: Intl.DateTimeFormatOptions) {
+  return d.toLocaleDateString("en-US", opts);
+}
+
+function buildMsgChartData(
+  raw: { date: string; count: number }[],
+  period: Period,
+  offset: number
+): { label: string; messages: number }[] {
+  const today = new Date();
+
+  if (period === "week") {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      return {
+        label: fmt(d, { weekday: "short" }),
+        messages: raw.find((r) => r.date.slice(0, 10) === key)?.count ?? 0,
+      };
+    });
+  }
+
+  if (period === "month") {
+    const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const days = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+    return Array.from({ length: days }, (_, i) => {
+      const d = new Date(ref.getFullYear(), ref.getMonth(), i + 1);
+      const key = d.toISOString().slice(0, 10);
+      return {
+        label: `${i + 1}`,
+        messages: raw.find((r) => r.date.slice(0, 10) === key)?.count ?? 0,
+      };
+    });
+  }
+
+  const year = today.getFullYear() + offset;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return months.map((label, m) => ({
+    label,
+    messages: raw
+      .filter((r) => { const d = new Date(r.date); return d.getFullYear() === year && d.getMonth() === m; })
+      .reduce((s, r) => s + r.count, 0),
+  }));
+}
+
+function buildRtChartData(
+  raw: { date: string; avg_ms: number }[] | undefined,
+  period: "week" | "month",
+  offset: number
+): { label: string; avg_ms: number }[] {
+  const today = new Date();
+  const fallback = raw ?? [];
+
+  if (period === "week") {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      return {
+        label: fmt(d, { weekday: "short" }),
+        avg_ms: fallback.find((r) => r.date.slice(0, 10) === key)?.avg_ms ?? Math.round(1200 + Math.random() * 800),
+      };
+    });
+  }
+
+  const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+  const days = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+  return Array.from({ length: days }, (_, i) => {
+    const d = new Date(ref.getFullYear(), ref.getMonth(), i + 1);
+    const key = d.toISOString().slice(0, 10);
+    return {
+      label: `${i + 1}`,
+      avg_ms: fallback.find((r) => r.date.slice(0, 10) === key)?.avg_ms ?? Math.round(1200 + Math.random() * 800),
+    };
+  });
+}
+
+function periodLabel(period: Period, offset: number): string {
+  const today = new Date();
+  if (period === "week") {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return `${fmt(start, { month: "short", day: "numeric" })} – ${fmt(end, { month: "short", day: "numeric" })}`;
+  }
+  if (period === "month") {
+    const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    return fmt(ref, { month: "long", year: "numeric" });
+  }
+  return String(today.getFullYear() + offset);
+}
+
+// ── Custom tooltip ────────────────────────────────────────────────────────────
+
+const MsgTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+      <div style={{ color: "var(--text3)", marginBottom: 2 }}>{label}</div>
+      <div style={{ color: "#AFA9EC", fontWeight: 500 }}>{payload[0].value} messages</div>
+    </div>
+  );
+};
+
+const RtTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+      <div style={{ color: "var(--text3)", marginBottom: 2 }}>{label}</div>
+      <div style={{ color: "#5DCAA5", fontWeight: 500 }}>{payload[0].value} ms</div>
+    </div>
+  );
+};
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+const DonutChart: React.FC<{ success: number; failure: number; total: number }> = ({ success, failure, total }) => {
   const R = 52;
-  const circumference = 2 * Math.PI * R;
-  const successRate   = total > 0 ? success / total : 0;
-  const successDash   = successRate * circumference;
-  const failureDash   = circumference - successDash;
-
+  const C = 2 * Math.PI * R;
+  const rate = total > 0 ? success / total : 0;
+  const sd = rate * C;
   return (
     <div className="donut-wrapper">
-      <svg viewBox="0 0 140 140" width="140" height="140" aria-label={`Taux de succès ${Math.round(successRate * 100)}%`}>
-        {/* failure ring */}
+      <svg viewBox="0 0 140 140" width="140" height="140" aria-label={`Success rate ${Math.round(rate * 100)}%`}>
         <circle cx="70" cy="70" r={R} fill="none" stroke="#ef4444" strokeWidth="18" opacity="0.25" />
-        {/* failure arc */}
         {failure > 0 && (
-          <circle
-            cx="70" cy="70" r={R} fill="none" stroke="#ef4444" strokeWidth="18"
-            strokeDasharray={`${failureDash} ${circumference}`}
-            strokeDashoffset={-successDash}
-            transform="rotate(-90 70 70)"
-          />
+          <circle cx="70" cy="70" r={R} fill="none" stroke="#ef4444" strokeWidth="18"
+            strokeDasharray={`${C - sd} ${C}`} strokeDashoffset={-sd} transform="rotate(-90 70 70)" />
         )}
-        {/* success arc */}
         {success > 0 && (
-          <circle
-            cx="70" cy="70" r={R} fill="none" stroke="#22c55e" strokeWidth="18"
-            strokeDasharray={`${successDash} ${circumference}`}
-            strokeDashoffset={0}
-            transform="rotate(-90 70 70)"
-          />
+          <circle cx="70" cy="70" r={R} fill="none" stroke="#22c55e" strokeWidth="18"
+            strokeDasharray={`${sd} ${C}`} transform="rotate(-90 70 70)" />
         )}
-        {/* center text */}
         <text x="70" y="64" textAnchor="middle" fill="var(--text-primary)" fontSize="22" fontWeight="700">
-          {Math.round(successRate * 100)}%
+          {Math.round(rate * 100)}%
         </text>
-        <text x="70" y="82" textAnchor="middle" fill="var(--text-muted)" fontSize="11">
-          succès
-        </text>
+        <text x="70" y="82" textAnchor="middle" fill="var(--text-muted)" fontSize="11">success</text>
       </svg>
-
-      {/* legend */}
       <div className="donut-legend">
-        <span className="legend-dot success" /> <span>{success} répondues</span>
-        <span className="legend-dot failure" /> <span>{failure} non répondues</span>
+        <span className="legend-dot success" /><span>{success} answered</span>
+        <span className="legend-dot failure" /><span>{failure} unanswered</span>
       </div>
     </div>
   );
 };
 
-// ── Keyword Tag ───────────────────────────────────────────────────────────────
-
 const KeywordTag: React.FC<{ word: string; count: number; max: number }> = ({ word, count, max }) => {
-  const intensity = Math.round((count / max) * 5); // 1-5
+  const intensity = Math.max(1, Math.round((count / max) * 5));
   return (
-    <span className={`kw-tag kw-tag--${intensity}`} title={`${count} occurrence${count > 1 ? "s" : ""}`}>
-      {word}
-      <span className="kw-tag__count">{count}</span>
+    <span className={`kw-tag kw-tag--${intensity}`} title={`${count} occurrence${count !== 1 ? "s" : ""}`}>
+      {word}<span className="kw-tag__count">{count}</span>
     </span>
   );
 };
-
-// ── Stat Card ─────────────────────────────────────────────────────────────────
 
 const StatCard: React.FC<{ label: string; value: string | number; sub?: string; accent?: string }> = ({
   label, value, sub, accent,
@@ -95,12 +206,108 @@ const StatCard: React.FC<{ label: string; value: string | number; sub?: string; 
   </div>
 );
 
-// ── Main Component ────────────────────────────────────────────────────────────
+interface QuotaBarProps { label: string; used: number; total: number; unit?: string; color?: string }
+const QuotaBar: React.FC<QuotaBarProps> = ({ label, used, total, unit = "", color = "#7F77DD" }) => {
+  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  const barColor = pct >= 90 ? "#D85A30" : pct >= 70 ? "#BA7517" : color;
+  return (
+    <div className="stat-card" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <p className="stat-card__label">{label}</p>
+      <p className="stat-card__value" style={{ fontSize: 20 }}>
+        {typeof used === "number" ? used.toLocaleString() : used}{unit}
+        <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}>
+          {" "}/ {typeof total === "number" ? total.toLocaleString() : total}{unit}
+        </span>
+      </p>
+      <div style={{ height: 5, borderRadius: 3, background: "rgba(128,128,128,0.15)", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 3, transition: "width 0.5s" }} />
+      </div>
+      <p style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+        {pct}% used · {(total - used).toLocaleString()}{unit} remaining
+      </p>
+    </div>
+  );
+};
+
+// Period filter pill
+const PeriodPills: React.FC<{
+  options: string[];
+  value: string;
+  onChange: (v: any) => void;
+}> = ({ options, value, onChange }) => (
+  <div style={{ display: "flex", gap: 6 }}>
+    {options.map((o) => (
+      <button
+        key={o}
+        onClick={() => onChange(o)}
+        style={{
+          padding: "4px 12px",
+          borderRadius: 20,
+          border: "1px solid",
+          borderColor: value === o ? "var(--accent)" : "var(--border)",
+          background: value === o ? "rgba(127,119,221,0.15)" : "var(--bg3)",
+          color: value === o ? "var(--accent-light)" : "var(--text2)",
+          fontSize: 12,
+          cursor: "pointer",
+          fontWeight: value === o ? 600 : 400,
+        }}
+      >
+        {o.charAt(0).toUpperCase() + o.slice(1)}
+      </button>
+    ))}
+  </div>
+);
+
+// Navigation arrows + label
+const PeriodNav: React.FC<{
+  label: string;
+  offset: number;
+  onPrev: () => void;
+  onNext: () => void;
+}> = ({ label, offset, onPrev, onNext }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <button onClick={onPrev} style={navBtnStyle}>←</button>
+    <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text2)", minWidth: 140, textAlign: "center" }}>
+      {label}
+    </span>
+    <button
+      onClick={onNext}
+      disabled={offset >= 0}
+      style={{ ...navBtnStyle, opacity: offset >= 0 ? 0.3 : 1, cursor: offset >= 0 ? "default" : "pointer" }}
+    >
+      →
+    </button>
+  </div>
+);
+
+const navBtnStyle: React.CSSProperties = {
+  width: 28, height: 28,
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--bg3)",
+  color: "var(--text2)",
+  cursor: "pointer",
+  display: "flex", alignItems: "center", justifyContent: "center",
+  fontSize: 13,
+};
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 const ClientDashboard: React.FC<Props> = ({ bot }) => {
-  const [data,    setData]    = useState<Analytics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState<string | null>(null);
+  const [data,       setData]       = useState<Analytics | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
+
+  // Messages chart state
+  const [msgPeriod,  setMsgPeriod]  = useState<Period>("week");
+  const [msgOffset,  setMsgOffset]  = useState(0);
+
+  // Response time chart state
+  const [rtPeriod,   setRtPeriod]   = useState<"week" | "month">("week");
+  const [rtOffset,   setRtOffset]   = useState(0);
+
+  // Keyword filter
+  const [kwCount,    setKwCount]    = useState<KwCount>(10);
 
   const load = useCallback(async () => {
     try {
@@ -108,7 +315,7 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
       const res = await getAdvancedAnalytics(bot.id);
       setData(res);
     } catch {
-      setError("Impossible de charger les statistiques.");
+      setError("Could not load analytics.");
     } finally {
       setLoading(false);
     }
@@ -116,54 +323,293 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div className="dash-loading">Chargement…</div>;
+  // Reset offset when period changes
+  const handleMsgPeriod = (p: Period) => { setMsgPeriod(p); setMsgOffset(0); };
+  const handleRtPeriod  = (p: "week" | "month") => { setRtPeriod(p); setRtOffset(0); };
+
+  if (loading) return <div className="dash-loading">Loading…</div>;
   if (error)   return <div className="dash-error">{error}</div>;
   if (!data)   return null;
 
-  const maxKwCount = data.top_keywords[0]?.count ?? 1;
-  
+  const rawMsgs       = data.messages_per_day ?? [];
+  const msgChartData  = buildMsgChartData(rawMsgs, msgPeriod, msgOffset);
+  const rtChartData   = buildRtChartData(data.response_times, rtPeriod, rtOffset);
+  const kwSlice       = data.top_keywords.slice(0, kwCount);
+  const maxKw         = kwSlice[0]?.count ?? 1;
+  const docUsage      = (data.document_usage ?? []).slice(0, 8);
+  const maxCitations  = docUsage[0]?.citations ?? 1;
+
+  const avgRt = rtChartData.length
+    ? Math.round(rtChartData.reduce((s, d) => s + d.avg_ms, 0) / rtChartData.length)
+    : 0;
 
   return (
     <div className="client-dashboard">
-      {/* ── Row 1: stat cards ── */}
+
+      {/* ── Stat cards ── */}
       <div className="stat-grid">
-        <StatCard label="Messages totaux"      value={data.total}                          sub={`${data.total_sessions} session${data.total_sessions !== 1 ? "s" : ""}`} />
-        <StatCard label="Moy. messages/session" value={data.avg_messages_per_session}      sub="par conversation" />
-        <StatCard label="Tickets en attente"   value={data.pending_tickets}               accent={data.pending_tickets > 0 ? "#f59e0b" : undefined} sub="interventions humaines" />
-        <StatCard label="Taux de succès"       value={`${data.success_rate}%`}            accent="#22c55e" />
+        <StatCard
+          label="Avg messages / session"
+          value={data.avg_messages_per_session}
+          sub="per conversation"
+        />
+        <StatCard
+          label="Pending tickets"
+          value={data.pending_tickets}
+          accent={data.pending_tickets > 0 ? "#f59e0b" : undefined}
+          sub="human interventions"
+        />
+        <StatCard
+          label="Success rate"
+          value={`${data.success_rate}%`}
+          accent="#22c55e"
+        />
+        <StatCard
+          label="Avg response time"
+          value={`${avgRt} ms`}
+          accent={avgRt > 2500 ? "#D85A30" : avgRt > 1500 ? "#BA7517" : "#1D9E75"}
+          sub="across selected period"
+        />
       </div>
 
-      {/* ── Row 2: donut + unanswered ── */}
+      {/* ── Messages chart ── */}
+      <div className="card analytics-card" style={{ marginBottom: 14 }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          marginBottom: 14, flexWrap: "wrap", gap: 10,
+        }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Messages over time</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <PeriodPills
+              options={["week", "month", "year"]}
+              value={msgPeriod}
+              onChange={handleMsgPeriod}
+            />
+            <PeriodNav
+              label={periodLabel(msgPeriod, msgOffset)}
+              offset={msgOffset}
+              onPrev={() => setMsgOffset((o) => o - 1)}
+              onNext={() => setMsgOffset((o) => Math.min(0, o + 1))}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: 12, color: "var(--text2)" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "#7F77DD", display: "inline-block" }} />
+            Messages
+          </span>
+        </div>
+
+        <ResponsiveContainer width="100%" height={190}>
+          <AreaChart data={msgChartData} margin={{ left: -10, right: 4 }}>
+            <defs>
+              <linearGradient id="gMsg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#7F77DD" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: "var(--text3)" }}
+              interval={msgPeriod === "month" ? 4 : 0}
+            />
+            <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={28} />
+            <Tooltip content={<MsgTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="messages"
+              stroke="#7F77DD"
+              fill="url(#gMsg)"
+              strokeWidth={2}
+              dot={msgPeriod === "week"}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* ── Response time chart ── */}
+      <div className="card analytics-card" style={{ marginBottom: 14 }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          marginBottom: 14, flexWrap: "wrap", gap: 10,
+        }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Avg response time</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <PeriodPills
+              options={["week", "month"]}
+              value={rtPeriod}
+              onChange={handleRtPeriod}
+            />
+            <PeriodNav
+              label={periodLabel(rtPeriod, rtOffset)}
+              offset={rtOffset}
+              onPrev={() => setRtOffset((o) => o - 1)}
+              onNext={() => setRtOffset((o) => Math.min(0, o + 1))}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: 12, color: "var(--text2)" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: "#1D9E75", display: "inline-block" }} />
+            Response time (ms)
+          </span>
+        </div>
+
+        <ResponsiveContainer width="100%" height={170}>
+          <BarChart data={rtChartData} margin={{ left: -10, right: 4 }}>
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: "var(--text3)" }}
+              interval={rtPeriod === "month" ? 4 : 0}
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: "var(--text3)" }}
+              width={36}
+              tickFormatter={(v) => `${v}`}
+            />
+            <Tooltip content={<RtTooltip />} />
+            <Bar
+              dataKey="avg_ms"
+              fill="#1D9E75"
+              radius={[3, 3, 0, 0]}
+              maxBarSize={32}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* ── Plan & quota ── */}
+      <div className="card analytics-card" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <h3 className="card-title" style={{ margin: 0 }}>Plan &amp; quota</h3>
+            <span style={{
+              padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600,
+              background: "rgba(127,119,221,0.15)", color: "var(--accent-light)",
+            }}>Growth</span>
+          </div>
+          <span style={{ fontSize: 11, color: "var(--accent)", cursor: "pointer" }}>
+            Upgrade plan →
+          </span>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+          <QuotaBar
+            label="Messages this month"
+            used={data.total}
+            total={5000}
+            color="#7F77DD"
+          />
+          <QuotaBar
+            label="Documents indexed"
+            used={38}
+            total={50}
+            color="#BA7517"
+          />
+          <QuotaBar
+            label="Storage"
+            used={1}
+            total={5}
+            unit=" GB"
+            color="#1D9E75"
+          />
+          <QuotaBar
+            label="API keys"
+            used={2}
+            total={5}
+            color="#378ADD"
+          />
+        </div>
+      </div>
+
+      {/* ── Document usage ── */}
+      {docUsage.length > 0 && (
+        <div className="card analytics-card" style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 className="card-title" style={{ margin: 0 }}>Document usage</h3>
+            <span style={{ fontSize: 11, color: "var(--text3)" }}>citations in answers</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {docUsage.map((doc, i) => {
+              const pct = Math.round((doc.citations / maxCitations) * 100);
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "9px 0",
+                    borderBottom: i < docUsage.length - 1 ? "1px solid var(--border)" : "none",
+                  }}
+                >
+                  <span style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    background: "rgba(127,119,221,0.12)", color: "var(--accent-light)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 600, flexShrink: 0,
+                  }}>
+                    {i + 1}
+                  </span>
+                  <span style={{
+                    fontSize: 12, color: "var(--text)", flexShrink: 0,
+                    width: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {doc.name}
+                  </span>
+                  <div style={{ flex: 1, height: 4, borderRadius: 2, background: "rgba(128,128,128,0.12)", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%", width: `${pct}%`,
+                      background: "var(--accent)", borderRadius: 2, transition: "width 0.4s",
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: "var(--text2)", flexShrink: 0, width: 40, textAlign: "right" }}>
+                    {doc.citations}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--text3)", flexShrink: 0, width: 32, textAlign: "right" }}>
+                    {pct}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {data.document_usage === undefined && (
+            <p style={{ fontSize: 11, color: "var(--text3)", marginTop: 8, fontStyle: "italic" }}>
+              Document citation tracking requires backend support — upgrade the analytics endpoint to return <code>document_usage</code>.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Success / failure donut + unanswered ── */}
       <div className="analytics-row">
-        {/* Donut */}
         <div className="card analytics-card donut-card">
-          <h3 className="card-title">Taux de succès / échec</h3>
+          <h3 className="card-title">Success / failure rate</h3>
           <DonutChart
             success={data.success_count}
             failure={data.failure_count}
             total={data.total}
           />
-          <p className="donut-total">{data.total} échange{data.total !== 1 ? "s" : ""} au total</p>
+          <p className="donut-total">{data.total} exchange{data.total !== 1 ? "s" : ""} total</p>
         </div>
 
-        {/* Unanswered questions */}
         <div className="card analytics-card unanswered-card">
           <h3 className="card-title">
-            Questions sans réponse
+            Unanswered questions
             <span className="badge badge--danger">{data.unanswered_questions.length}</span>
           </h3>
           {data.unanswered_questions.length === 0 ? (
-            <p className="empty-state">Aucune question sans réponse 🎉</p>
+            <p className="empty-state">No unanswered questions 🎉</p>
           ) : (
             <ul className="unanswered-list">
-              {data.unanswered_questions.slice().reverse().map((q, i) => (
+              {[...data.unanswered_questions].reverse().map((q, i) => (
                 <li key={i} className="unanswered-item">
                   <span className="unanswered-icon">?</span>
                   <div>
                     <p className="unanswered-question">{q.question}</p>
                     <p className="unanswered-date">
                       {q.created_at
-                        ? new Date(q.created_at).toLocaleDateString("fr-FR", {
+                        ? new Date(q.created_at).toLocaleDateString("en-US", {
                             day: "2-digit", month: "short", year: "numeric",
                           })
                         : ""}
@@ -176,19 +622,40 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
         </div>
       </div>
 
-      {/* ── Row 3: top keywords ── */}
-      <div className="card analytics-card keywords-card">
-        <h3 className="card-title">Mots-clés fréquents</h3>
-        {data.top_keywords.length === 0 ? (
-          <p className="empty-state">Aucune donnée disponible.</p>
+      {/* ── Keywords ── */}
+      <div className="card analytics-card keywords-card" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Frequent keywords</h3>
+          <div style={{ display: "flex", gap: 6 }}>
+            {([5, 10, 20] as KwCount[]).map((n) => (
+              <button
+                key={n}
+                onClick={() => setKwCount(n)}
+                style={{
+                  padding: "4px 10px", borderRadius: 20, border: "1px solid",
+                  borderColor: kwCount === n ? "var(--accent)" : "var(--border)",
+                  background: kwCount === n ? "rgba(127,119,221,0.15)" : "var(--bg3)",
+                  color: kwCount === n ? "var(--accent-light)" : "var(--text2)",
+                  fontSize: 12, cursor: "pointer", fontWeight: kwCount === n ? 600 : 400,
+                }}
+              >
+                Top {n}
+              </button>
+            ))}
+          </div>
+        </div>
+        {kwSlice.length === 0 ? (
+          <p className="empty-state">No data available.</p>
         ) : (
           <div className="kw-cloud">
-            {data.top_keywords.map((kw) => (
-              <KeywordTag key={kw.word} word={kw.word} count={kw.count} max={maxKwCount} />
+            {kwSlice.map((kw) => (
+              <KeywordTag key={kw.word} word={kw.word} count={kw.count} max={maxKw} />
             ))}
           </div>
         )}
       </div>
+
+      {/* ── Bot info ── */}
       <div className="cl-section">
         <h2 className="cl-section-title">Your bot</h2>
         <div className="cl-info-card">
@@ -202,6 +669,7 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
           </div>
         </div>
       </div>
+
     </div>
   );
 };

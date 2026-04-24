@@ -10,6 +10,7 @@ from routers import admin, auth, sessions, documents, chat
 from routers.widgets import router as widgets_router
 from routers.widget_chat import router as widget_chat_router
 from routers.widget_chat import limiter
+from routers import test_sessions
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -53,6 +54,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 from routers.human_intervention import router as intervention_router
 app.include_router(intervention_router, tags=["Intervention"])
 
+app.include_router(test_sessions.router)
 
 @app.get("/")
 def root():

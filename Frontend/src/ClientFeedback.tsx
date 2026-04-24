@@ -14,16 +14,52 @@ interface FeedbackItem {
   created_at: string;
 }
 
+interface TestSession {
+  id: string;
+  email: string;
+  granted_at: string;
+  expires_at: string;
+  duration_label: string;
+  is_active: boolean;
+}
+
 interface Props {
   bot: Bot | null;
 }
 
+const TEST_DURATIONS = [
+  { label: "30 min",  minutes: 30 },
+  { label: "1 hour",  minutes: 60 },
+  { label: "6 hours", minutes: 360 },
+  { label: "24 hours",minutes: 1440 },
+  { label: "7 days",  minutes: 10080 },
+  { label: "Always active", minutes: 0 },
+];
+
+function minutesUntilExpiry(expiresAt: string): string {
+  if (!expiresAt) return "Always active";
+  const diff = new Date(expiresAt).getTime() - Date.now();
+  if (diff <= 0) return "Expired";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m remaining`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hrs}h ${rem}m remaining` : `${hrs}h remaining`;
+}
+
 export default function ClientFeedback({ bot }: Props) {
-  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
-  const [avgScore, setAvgScore] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [feedback,       setFeedback]       = useState<FeedbackItem[]>([]);
+  const [avgScore,       setAvgScore]       = useState(0);
+  const [total,          setTotal]          = useState(0);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState<string | null>(null);
+
+  // Testing access state
+  const [allowTesting,   setAllowTesting]   = useState(false);
+  const [testDuration,   setTestDuration]   = useState(TEST_DURATIONS[0]);
+  const [testSessions,   setTestSessions]   = useState<TestSession[]>([]);
+  const [activating,     setActivating]     = useState(false);
+  const [testMsg,        setTestMsg]        = useState<string | null>(null);
 
   const loadFeedback = async () => {
     if (!bot) return;
@@ -48,9 +84,68 @@ export default function ClientFeedback({ bot }: Props) {
     }
   };
 
+  const loadTestSessions = async () => {
+    if (!bot) return;
+    try {
+      const res = await fetch(`${API}/widgets/bots/${bot.id}/test-sessions`, {
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTestSessions(data.sessions || []);
+      }
+    } catch {
+      // silently fail — endpoint may not exist yet
+    }
+  };
+
   useEffect(() => {
     loadFeedback();
+    loadTestSessions();
   }, [bot]);
+
+  const handleActivateTest = async () => {
+    if (!bot) return;
+    setActivating(true);
+    setTestMsg(null);
+    try {
+      const body: any = { duration_minutes: testDuration.minutes };
+      const res = await fetch(`${API}/widgets/bots/${bot.id}/test-sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const e = await res.json();
+        throw new Error(e.detail || "Failed to activate test access");
+      }
+      const data = await res.json();
+      setTestMsg(
+        testDuration.minutes === 0
+          ? "Permanent test access granted. The admin can now access this bot widget."
+          : `Test access activated for ${testDuration.label}. Access expires at ${new Date(data.expires_at).toLocaleTimeString()}.`
+      );
+      setAllowTesting(false);
+      await loadTestSessions();
+    } catch (err: any) {
+      setTestMsg(`Error: ${err.message}`);
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  const handleRevokeTest = async (sessionId: string) => {
+    if (!bot) return;
+    try {
+      await fetch(`${API}/widgets/bots/${bot.id}/test-sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      await loadTestSessions();
+    } catch {
+      // silently fail
+    }
+  };
 
   if (!bot) return null;
 
@@ -58,7 +153,9 @@ export default function ClientFeedback({ bot }: Props) {
     <div className="cl-page">
       <div className="cl-page-header">
         <h1 className="cl-page-title">Feedback</h1>
-        <p className="cl-page-sub">Help us improve your bot by rating its performance and sharing what can be better.</p>
+        <p className="cl-page-sub">
+          Rate your bot's performance and manage temporary admin test access.
+        </p>
       </div>
 
       {loading ? (
@@ -74,14 +171,185 @@ export default function ClientFeedback({ bot }: Props) {
             </div>
             <div className="cl-stat-card">
               <div className="cl-stat-value">{total}</div>
-              <div className="cl-stat-label">Feedback submissions</div>
+              <div className="cl-stat-label">Submissions</div>
             </div>
           </div>
 
+          {/* ── Feedback form + Allow testing ── */}
           <div className="cl-section">
-            <FeedbackWidget bot={bot} onSuccess={loadFeedback} />
+            <div className="cl-feedback-card">
+              <div className="cl-section-title">Share feedback</div>
+              <p className="cl-hint">
+                Rate the bot so we can improve accuracy, speed, and relevance.
+              </p>
+
+              <FeedbackWidget bot={bot} onSuccess={loadFeedback} />
+
+              {/* Allow testing toggle */}
+              <div
+                style={{
+                  marginTop: 20,
+                  paddingTop: 16,
+                  borderTop: "1px solid var(--border)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      cursor: "pointer",
+                      padding: "7px 14px",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--border)",
+                      background: allowTesting ? "rgba(127,119,221,0.08)" : "var(--bg2)",
+                      fontSize: 13,
+                      color: "var(--text2)",
+                      userSelect: "none",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allowTesting}
+                      onChange={(e) => {
+                        setAllowTesting(e.target.checked);
+                        setTestMsg(null);
+                      }}
+                      style={{ accentColor: "var(--accent)" }}
+                    />
+                    Allow admin testing
+                    <span
+                      title="Grants temporary access for an admin to test this bot widget — useful for debugging without exposing it publicly."
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        background: "var(--bg3)",
+                        color: "var(--text3)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        cursor: "help",
+                        flexShrink: 0,
+                      }}
+                    >?</span>
+                  </label>
+                </div>
+
+                {allowTesting && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      padding: "12px 14px",
+                      background: "var(--bg2)",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <span style={{ fontSize: 13, color: "var(--text2)", whiteSpace: "nowrap" }}>
+                      Duration:
+                    </span>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {TEST_DURATIONS.map((d) => (
+                        <label
+                          key={d.label}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12,
+                            padding: "5px 10px",
+                            borderRadius: 20,
+                            border: "1px solid",
+                            borderColor: testDuration.label === d.label ? "var(--accent)" : "var(--border)",
+                            background: testDuration.label === d.label ? "rgba(127,119,221,0.12)" : "var(--bg3)",
+                            color: testDuration.label === d.label ? "var(--accent-light)" : "var(--text2)",
+                            cursor: "pointer",
+                            userSelect: "none",
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="testDuration"
+                            checked={testDuration.label === d.label}
+                            onChange={() => setTestDuration(d)}
+                            style={{ display: "none" }}
+                          />
+                          {d.label}
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      className="cl-btn-primary"
+                      onClick={handleActivateTest}
+                      disabled={activating}
+                      style={{ marginLeft: "auto" }}
+                    >
+                      {activating ? "Activating…" : "Activate"}
+                    </button>
+                  </div>
+                )}
+
+                {testMsg && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      padding: "8px 12px",
+                      borderRadius: "var(--radius-sm)",
+                      background: testMsg.startsWith("Error")
+                        ? "rgba(216,90,48,0.08)"
+                        : "rgba(29,158,117,0.08)",
+                      border: `1px solid ${testMsg.startsWith("Error") ? "rgba(216,90,48,0.2)" : "rgba(29,158,117,0.2)"}`,
+                      color: testMsg.startsWith("Error") ? "var(--danger)" : "var(--success)",
+                    }}
+                  >
+                    {testMsg}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* ── Active test sessions ── */}
+          {testSessions.length > 0 && (
+            <div className="cl-section">
+              <h2 className="cl-section-title">Active test sessions</h2>
+              <div className="cl-doc-list">
+                {testSessions.map((s) => (
+                  <div key={s.id} className="cl-doc-row">
+                    <div className="cl-doc-info" style={{ flex: 1 }}>
+                      <div className="cl-doc-name">{s.email || "Admin"}</div>
+                      <div className="cl-doc-meta">
+                        Granted {new Date(s.granted_at).toLocaleDateString()} ·{" "}
+                        {s.expires_at ? minutesUntilExpiry(s.expires_at) : "Always active"}
+                      </div>
+                    </div>
+                    <div className={`cl-badge ${s.is_active ? "success" : "warn"}`}>
+                      {s.is_active ? "Active" : "Expired"}
+                    </div>
+                    <button
+                      className="cl-btn-danger"
+                      onClick={() => handleRevokeTest(s.id)}
+                      title="Revoke test access"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Recent feedback ── */}
           <div className="cl-section">
             <h2 className="cl-section-title">Recent feedback</h2>
             {feedback.length === 0 ? (
