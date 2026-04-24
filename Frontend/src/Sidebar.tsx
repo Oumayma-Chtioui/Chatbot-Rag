@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect, ChangeEvent, DragEvent, KeyboardEvent } from "react";
-import { Session, Doc, Message, AuthPageProps, SidebarProps, ChatPageProps, UploadPageProps } from './types.tsx';  // Import interfaces
+import { Session, SidebarProps } from './types.tsx';
+import { useTheme } from './useTheme';
+
 function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onNewChat, userName, onLogout, onDeleteSession }: SidebarProps) {
+  const [theme, toggleTheme] = useTheme();
+
   return (
     <>
-      
       <div className="sidebar-header">
         <div className="logo" style={{ fontSize: 16 }}>
           <div className="logo-icon" style={{ width: 28, height: 28, fontSize: 12 }}>✦</div>
@@ -34,14 +36,10 @@ function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onN
             <div className="session-time">{s.time}</div>
             <button
               className="session-delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteSession(s.id);
-              }}
+              onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id); }}
             >
               🗑
             </button>
-
           </div>
         ))}
       </div>
@@ -51,28 +49,36 @@ function Sidebar({ page, setPage, sessions, activeSession, setActiveSession, onN
           <div className="avatar">{userName.charAt(0).toUpperCase()}</div>
           <div className="user-info">
             <div className="user-name">{userName}</div>
-            
           </div>
           <span style={{ color: "var(--text3)", fontSize: 14 }}>⚙</span>
         </div>
-        <button
-        onClick={onLogout}
-        title="Log out"
-        style={{
-          background: "transparent",
-          border: "none",
-          color: "var(--text3)",
-          cursor: "pointer",
-          fontSize: 16,
-          padding: "4px",
-          borderRadius: "6px",
-          transition: "var(--transition)",
-        }}
-        onMouseEnter={e => (e.currentTarget.style.color = "var(--danger)")}
-        onMouseLeave={e => (e.currentTarget.style.color = "var(--text3)")}
-      >
-        ⏻
-      </button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px" }}>
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+          <button
+            onClick={onLogout}
+            title="Log out"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--text3)",
+              cursor: "pointer",
+              fontSize: 16,
+              padding: "4px",
+              borderRadius: "6px",
+              transition: "var(--transition)",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--danger)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text3)")}
+          >
+            ⏻
+          </button>
+        </div>
       </div>
     </>
   );

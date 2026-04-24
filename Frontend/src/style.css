@@ -24,6 +24,24 @@
 --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ── Light theme overrides ── */
+[data-theme="light"] {
+--bg: #f4f3ff;
+--surface: #ffffff;
+--surface2: #ede9ff;
+--surface3: #ddd8f8;
+--border: #0000000e;
+--border2: #00000018;
+--accent: #6c58ff;
+--accent2: #9333ea;
+--accent-glow: #6c58ff22;
+--text: #13111f;
+--text2: #4a4868;
+--text3: #8e8aab;
+--danger: #e63353;
+--success: #16a34a;
+}
+
 body { background: var(--bg); color: var(--text); font-family: var(--font-body); min-height: 100vh; overflow-x: hidden; }
 
 ::-webkit-scrollbar { width: 4px; }
@@ -95,9 +113,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .session-time { font-size: 11px; color: var(--text3); flex-shrink: 0; }
 
 .session-delete {background: transparent;border: none;cursor: pointer;color: var(--text3);padding: 4px;border-radius: var(--radius-sm); transition: var(--transition); opacity: 0;}
-
 .session-item:hover .session-delete { opacity: 1;}
-
 .session-delete:hover { color: var(--danger); background: transparent;}
 
 .sidebar-footer { padding: 12px 8px; border-top: 1px solid var(--border); }
@@ -194,6 +210,23 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .doc-status.processing { background: var(--accent-glow); color: var(--accent); }
 .doc-delete { width: 28px; height: 28px; background: transparent; border: none; color: var(--text3); cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: var(--transition); }
 .doc-delete:hover { background: #ff557222; color: var(--danger); }
+
+.upload-error { color: var(--danger); font-size: 13px; margin-top: 10px; padding: 10px 14px; background: rgba(255,85,114,0.08); border-radius: var(--radius-sm); border: 1px solid rgba(255,85,114,0.2); }
+
+/* ── Theme toggle button ── */
+.theme-toggle {
+  width: 36px; height: 36px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+.theme-toggle:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 .animate-in { animation: fadeIn 0.3s ease forwards; }

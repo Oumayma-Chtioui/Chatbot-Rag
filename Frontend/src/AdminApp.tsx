@@ -9,6 +9,7 @@ import AdminBilling from "./AdminBilling";
 import AdminSystem from "./AdminSystem";
 import AdminTestBot from "./AdminTestBot";
 import * as api from "./api";
+import { useTheme } from "./useTheme";
 
 const API = "http://localhost:8000";
 const adminToken = () => localStorage.getItem("admin_token");
@@ -16,7 +17,6 @@ const adminToken = () => localStorage.getItem("admin_token");
 const tabItems = [
   { key: "overview", label: "Overview", icon: "◈" },
   { key: "chatbots", label: "Chatbots", icon: "◉" },
-//   { key: "users", label: "Users", icon: "▦" },
   { key: "feedback", label: "Feedback", icon: "✦" },
   { key: "billing", label: "Billing", icon: "◎" },
   { key: "system", label: "System", icon: "⬡" },
@@ -44,6 +44,7 @@ export default function AdminApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, toggleTheme] = useTheme();
 
   useEffect(() => {
     if (!authenticated) return;
@@ -93,26 +94,18 @@ export default function AdminApp() {
     }
   };
 
-  const onSelectChatbot = (bot: any) => {
-    setSelectedChatbot(bot);
-  };
+  const onSelectChatbot = (bot: any) => setSelectedChatbot(bot);
 
   const loadTab = async (activeTab: typeof tabItems[number]["key"]) => {
     setError(null);
     setLoading(true);
-
     try {
-      if (activeTab === "overview") {
-        setStats(await api.getAdminStats());
-      }
+      if (activeTab === "overview") setStats(await api.getAdminStats());
       if (activeTab === "chatbots" || activeTab === "testbot") {
         const data = await api.getAdminBots();
         setBots(data.bots || []);
         if (!selectedBot && data.bots?.length) setSelectedBot(data.bots[0].id);
       }
-    //   if (activeTab === "users") {
-    //     setUsers(await api.getAdminUsers());
-    //   }
       if (activeTab === "feedback") {
         const data = await fetchWithAuth("/admin/feedback");
         setFeedback(data.feedback || []);
@@ -121,9 +114,7 @@ export default function AdminApp() {
         const data = await fetchWithAuth("/admin/billing");
         setBilling(data.clients || []);
       }
-      if (activeTab === "system") {
-        setSystem(await api.getSystemHealth());
-      }
+      if (activeTab === "system") setSystem(await api.getSystemHealth());
     } catch (err: any) {
       setError(err.message || "Could not load admin data.");
     } finally {
@@ -131,18 +122,11 @@ export default function AdminApp() {
     }
   };
 
-  if (!authenticated) {
-    return <AdminLogin onLogin={handleLogin} />;
-  }
+  if (!authenticated) return <AdminLogin onLogin={handleLogin} />;
 
   const tabLabelMap: Record<string, string> = {
-    overview: "Overview",
-    chatbots: "Chatbots",
-    users: "Users",
-    feedback: "Feedback",
-    billing: "Billing",
-    system: "System",
-    testbot: "Test Bot",
+    overview: "Overview", chatbots: "Chatbots", users: "Users",
+    feedback: "Feedback", billing: "Billing", system: "System", testbot: "Test Bot",
   };
 
   return (
@@ -173,10 +157,18 @@ export default function AdminApp() {
               <div className="cl-user-role">Administrator</div>
             </div>
           </div>
-          <button className="cl-logout" onClick={handleLogout}>Sign out</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="cl-theme-toggle"
+              onClick={toggleTheme}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+            <button className="cl-logout" onClick={handleLogout}>Sign out</button>
+          </div>
         </div>
       </aside>
-
       <main className="cl-main">
         <div className="cl-page">
           <div className="cl-page-header">
@@ -186,12 +178,9 @@ export default function AdminApp() {
               <p className="cl-page-sub">Manage platform, metrics, bots, users, and system health.</p>
             </div>
           </div>
-
           {error && <div className="cl-error">{error}</div>}
-
           {tab === "overview" && <AdminOverview stats={stats} loading={loading} />}
           {tab === "chatbots" && (selectedChatbot ? <AdminBotDashboard bot={selectedChatbot} onBack={() => setSelectedChatbot(null)} /> : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={onSelectChatbot} />)}
-          {/* {tab === "users" && <AdminUsers users={users} loading={loading} onDelete={handleDeleteUser} />} */}
           {tab === "feedback" && <AdminFeedback feedback={feedback} loading={loading} />}
           {tab === "billing" && <AdminBilling billing={billing} loading={loading} />}
           {tab === "system" && <AdminSystem system={system} loading={loading} />}

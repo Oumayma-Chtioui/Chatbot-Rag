@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import ClientLogin from "./ClientLogin";
 import ClientDashboard from "./ClientDashboard";
 import ClientDocuments from "./ClientDocuments";
@@ -7,6 +7,7 @@ import ClientAnalytics from "./ClientAnalytics";
 import ClientFeedback from "./ClientFeedback";
 import "./client-style.css";
 import ClientTickets from "./ClientTickets";
+import { useTheme } from "./useTheme";
 
 export type ClientPage = "dashboard" | "documents" | "widget" | "analytics" | "feedback" | "tickets";
 
@@ -34,6 +35,8 @@ export default function ClientApp() {
     try { return JSON.parse(localStorage.getItem("client_bot") || "null"); }
     catch { return null; }
   });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, toggleTheme] = useTheme();
 
   const handleLogin = (userData: ClientUser, token: string, botData: Bot) => {
     localStorage.setItem("client_token", token);
@@ -52,21 +55,17 @@ export default function ClientApp() {
     setUser(null);
     setBot(null);
   };
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (!authed) return <ClientLogin onLogin={handleLogin} />;
 
   return (
     <div className="cl-layout">
-      <div className={`cl-sidebar-overlay ${sidebarOpen ? "open" : ""}`}
-      onClick={() => setSidebarOpen(false)}
-    />
+      <div className={`cl-sidebar-overlay ${sidebarOpen ? "open" : ""}`} onClick={() => setSidebarOpen(false)} />
       <aside className={`cl-sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="cl-brand">
           <span className="cl-brand-icon">✦</span>
           <span className="cl-brand-name">NovaMind</span>
         </div>
-
         <nav className="cl-nav">
           {([
             ["dashboard",  "▦", "Dashboard"],
@@ -86,7 +85,6 @@ export default function ClientApp() {
             </button>
           ))}
         </nav>
-
         <div className="cl-sidebar-footer">
           <div className="cl-user-info">
             <div className="cl-avatar">{user?.name?.charAt(0).toUpperCase()}</div>
@@ -95,25 +93,28 @@ export default function ClientApp() {
               <div className="cl-user-role">Client</div>
             </div>
           </div>
-          <button className="cl-logout" onClick={handleLogout}>Sign out</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="cl-theme-toggle"
+              onClick={toggleTheme}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+            <button className="cl-logout" onClick={handleLogout}>Sign out</button>
+          </div>
         </div>
       </aside>
-
       <main className="cl-main">
         <div className="cl-page-header">
-        <button
-          className="cl-hamburger"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-        >
-          ☰
-        </button>
-      </div>
+          <button className="cl-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+        </div>
         {page === "dashboard"  && bot && <ClientDashboard bot={bot} />}
         {page === "documents"  && bot && <ClientDocuments bot={bot} />}
         {page === "widget"     && bot && <ClientWidget bot={bot} setBot={setBot} user={user} />}
         {page === "analytics"  && bot && <ClientAnalytics bot={bot} />}
         {page === "feedback"   && bot && <ClientFeedback bot={bot} />}
-        {page === "tickets"    && <ClientTickets  />}
+        {page === "tickets"    && <ClientTickets />}
       </main>
     </div>
   );
