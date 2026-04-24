@@ -322,3 +322,174 @@ body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-s
   .cl-sidebar.open { left: 0; }
   .cl-main { width: 100%; }
 }
+/* fixes */
+/*
+  ============================================================
+  RESPONSIVE SIDEBAR FIX
+  Replace / merge these rules into client-style.css.
+  They fix both the Client and Admin sidebar on mobile.
+  ============================================================
+*/
+
+/* ── Base layout ──────────────────────────────────────────── */
+
+.cl-layout,
+.admin-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar — desktop default ────────────────────────────── */
+
+.cl-sidebar,
+.admin-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+  /* Smooth open/close on mobile */
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Mobile topbar (hamburger row) ────────────────────────── */
+/*
+   This bar is ALWAYS rendered in the DOM but hidden on desktop.
+   It sits at the top of .cl-main so the hamburger is always
+   accessible without needing a fixed-position element.
+*/
+
+.cl-mobile-topbar {
+  display: none; /* hidden on desktop */
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.cl-hamburger {
+  /* visible only when .cl-mobile-topbar is shown */
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cl-hamburger:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.cl-mobile-title {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* ── Overlay ──────────────────────────────────────────────── */
+
+.cl-sidebar-overlay,
+.admin-sidebar-overlay {
+  display: none; /* off by default — JS adds .open */
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 998;
+  /* fade in/out */
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.cl-sidebar-overlay.open,
+.admin-sidebar-overlay.open {
+  display: block;
+  opacity: 1;
+}
+
+/* ── Main content area ────────────────────────────────────── */
+
+.cl-main {
+  flex: 1;
+  min-width: 0; /* prevent grid blowout */
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+/* ── Mobile breakpoint ────────────────────────────────────── */
+
+@media (max-width: 768px) {
+
+  /* Show the sticky topbar */
+  .cl-mobile-topbar {
+    display: flex;
+  }
+
+  /* Sidebars slide in from the left as a drawer */
+  .cl-sidebar,
+  .admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    z-index: 999;
+    transform: translateX(-100%); /* hidden off-screen */
+    /* keep padding/overflow */
+    overflow-y: auto;
+  }
+
+  /* When open, slide into view */
+  .cl-sidebar.open,
+  .admin-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Remove the gap that the sidebar used to occupy */
+  .cl-layout,
+  .admin-layout {
+    display: block;
+  }
+
+  /* Page padding tightens on mobile */
+  .cl-page {
+    padding: 24px 18px;
+  }
+
+  /* Stats grids stack */
+  .cl-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Admin modal becomes single column */
+  .admin-modal-dialog {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-modal-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 480px) {
+  .cl-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}

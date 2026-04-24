@@ -9,8 +9,7 @@ import AdminBilling from "./AdminBilling";
 import AdminSystem from "./AdminSystem";
 import AdminTestBot from "./AdminTestBot";
 import * as api from "./api";
-import { useTheme } from "./useTheme";
-
+import { useTheme } from "./UseTheme";
 const API = "http://localhost:8000";
 const adminToken = () => localStorage.getItem("admin_token");
 
@@ -18,9 +17,9 @@ const tabItems = [
   { key: "overview", label: "Overview", icon: "◈" },
   { key: "chatbots", label: "Chatbots", icon: "◉" },
   { key: "feedback", label: "Feedback", icon: "✦" },
-  { key: "billing", label: "Billing", icon: "◎" },
-  { key: "system", label: "System", icon: "⬡" },
-  { key: "testbot", label: "Test Bot", icon: "▷" },
+  { key: "billing",  label: "Billing",  icon: "◎" },
+  { key: "system",   label: "System",   icon: "⬡" },
+  { key: "testbot",  label: "Test Bot", icon: "▷" },
 ] as const;
 
 interface BillingRow { email: string; messages_count: number; docs_count: number; sessions_count: number; storage_mb: number; plan_tier: string; }
@@ -44,14 +43,23 @@ export default function AdminApp() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, toggleTheme] = useTheme();
 
   useEffect(() => {
     if (!authenticated) return;
     loadTab(tab);
   }, [authenticated, tab]);
 
-  const closeSidebar = () => setSidebarOpen(false);
+  // Close sidebar on Escape key
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSidebarOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const navigate = (t: typeof tabItems[number]["key"]) => {
+    setTab(t);
+    setSidebarOpen(false);
+  };
 
   const handleLogin = (name: string) => {
     setAdminName(name);
@@ -94,13 +102,13 @@ export default function AdminApp() {
     }
   };
 
-  const onSelectChatbot = (bot: any) => setSelectedChatbot(bot);
-
   const loadTab = async (activeTab: typeof tabItems[number]["key"]) => {
     setError(null);
     setLoading(true);
     try {
-      if (activeTab === "overview") setStats(await api.getAdminStats());
+      if (activeTab === "overview") {
+        setStats(await api.getAdminStats());
+      }
       if (activeTab === "chatbots" || activeTab === "testbot") {
         const data = await api.getAdminBots();
         setBots(data.bots || []);
@@ -114,7 +122,9 @@ export default function AdminApp() {
         const data = await fetchWithAuth("/admin/billing");
         setBilling(data.clients || []);
       }
-      if (activeTab === "system") setSystem(await api.getSystemHealth());
+      if (activeTab === "system") {
+        setSystem(await api.getSystemHealth());
+      }
     } catch (err: any) {
       setError(err.message || "Could not load admin data.");
     } finally {
@@ -122,16 +132,30 @@ export default function AdminApp() {
     }
   };
 
-  if (!authenticated) return <AdminLogin onLogin={handleLogin} />;
+  if (!authenticated) {
+    return <AdminLogin onLogin={handleLogin} />;
+  }
 
   const tabLabelMap: Record<string, string> = {
-    overview: "Overview", chatbots: "Chatbots", users: "Users",
-    feedback: "Feedback", billing: "Billing", system: "System", testbot: "Test Bot",
+    overview: "Overview",
+    chatbots: "Chatbots",
+    feedback: "Feedback",
+    billing:  "Billing",
+    system:   "System",
+    testbot:  "Test Bot",
   };
+
+  const [theme, toggleTheme] = useTheme()
 
   return (
     <div className="admin-layout">
-      <div className={`admin-sidebar-overlay${sidebarOpen ? " open" : ""}`} onClick={closeSidebar} />
+      {/* Overlay */}
+      <div
+        className={`admin-sidebar-overlay${sidebarOpen ? " open" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden="true"
+      />
+
       <aside className={`admin-sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="cl-brand">
           <span className="cl-brand-icon">⚙️</span>
@@ -141,8 +165,8 @@ export default function AdminApp() {
           {tabItems.map((item) => (
             <button
               key={item.key}
-              className={`cl-nav-item ${tab === item.key ? "active" : ""}`}
-              onClick={() => setTab(item.key)}
+              className={`cl-nav-item${tab === item.key ? " active" : ""}`}
+              onClick={() => navigate(item.key)}
             >
               <span className="cl-nav-icon">{item.icon}</span>
               {item.label}
@@ -157,34 +181,47 @@ export default function AdminApp() {
               <div className="cl-user-role">Administrator</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
+          <button
               className="cl-theme-toggle"
               onClick={toggleTheme}
               title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
-            <button className="cl-logout" onClick={handleLogout}>Sign out</button>
-          </div>
+          <button className="cl-logout" onClick={handleLogout}>Sign out</button>
         </div>
       </aside>
+
       <main className="cl-main">
+        {/* Mobile topbar */}
+        <div className="cl-mobile-topbar">
+          <button
+            className="cl-hamburger"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle navigation"
+          >
+            ☰
+          </button>
+          <span className="cl-mobile-title">Admin Console</span>
+        </div>
+
         <div className="cl-page">
           <div className="cl-page-header">
-            <button className="admin-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
-            <div style={{ flex: 1 }}>
-              <h1 className="cl-page-title">{tabLabelMap[tab] || "Admin Console"}</h1>
-              <p className="cl-page-sub">Manage platform, metrics, bots, users, and system health.</p>
-            </div>
+            <h1 className="cl-page-title">{tabLabelMap[tab] || "Admin Console"}</h1>
+            <p className="cl-page-sub">Manage platform, metrics, bots, users, and system health.</p>
           </div>
+
           {error && <div className="cl-error">{error}</div>}
+
           {tab === "overview" && <AdminOverview stats={stats} loading={loading} />}
-          {tab === "chatbots" && (selectedChatbot ? <AdminBotDashboard bot={selectedChatbot} onBack={() => setSelectedChatbot(null)} /> : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={onSelectChatbot} />)}
+          {tab === "chatbots" && (selectedChatbot
+            ? <AdminBotDashboard bot={selectedChatbot} onBack={() => setSelectedChatbot(null)} />
+            : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={setSelectedChatbot} />
+          )}
           {tab === "feedback" && <AdminFeedback feedback={feedback} loading={loading} />}
-          {tab === "billing" && <AdminBilling billing={billing} loading={loading} />}
-          {tab === "system" && <AdminSystem system={system} loading={loading} />}
-          {tab === "testbot" && <AdminTestBot bots={bots} selectedBot={selectedBot} onBotSelect={setSelectedBot} loading={loading} />}
+          {tab === "billing"  && <AdminBilling billing={billing} loading={loading} />}
+          {tab === "system"   && <AdminSystem system={system} loading={loading} />}
+          {tab === "testbot"  && <AdminTestBot bots={bots} selectedBot={selectedBot} onBotSelect={setSelectedBot} loading={loading} />}
         </div>
       </main>
     </div>

@@ -149,7 +149,6 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
   const uploadTypes = [
     { key: "pdf" as Doc["type"], icon: "📄", title: "PDF / Document", sub: ".pdf, .txt, .docx, .md" },
     { key: "url" as Doc["type"], icon: "🔗", title: "Web URL", sub: "Any public webpage or article" },
-    { key: "image" as Doc["type"], icon: "🖼️", title: "Image", sub: ".png, .jpg, .webp, screenshots" },
   ];
 
   const allDocsReady = docs.length > 0 && docs.every(doc => doc.status === "ready");
