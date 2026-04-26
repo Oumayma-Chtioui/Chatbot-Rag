@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ClientDocuments.tsx  — add onUpload callback prop so the dashboard refreshes
+// CHANGES:
+//   1. Accept optional `onUpload?: () => void` prop
+//   2. Call onUpload() after every successful upload / URL add / delete
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useState, useEffect, ChangeEvent } from "react";
 import { Bot } from "./ClientApp";
 
@@ -15,9 +22,10 @@ interface Doc {
 
 interface Props {
   bot: Bot | null;
+  onUpload?: () => void;   // NEW — called after any successful mutation
 }
 
-export default function ClientDocuments({ bot }: Props) {
+export default function ClientDocuments({ bot, onUpload }: Props) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +59,7 @@ export default function ClientDocuments({ bot }: Props) {
         throw new Error(e.detail || "Upload failed");
       }
       await loadDocs();
+      onUpload?.();          // ← notify parent
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -77,6 +86,7 @@ export default function ClientDocuments({ bot }: Props) {
       }
       setUrl("");
       await loadDocs();
+      onUpload?.();          // ← notify parent
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -90,6 +100,7 @@ export default function ClientDocuments({ bot }: Props) {
       headers: { Authorization: `Bearer ${token()}` },
     });
     setDocs((d) => d.filter((doc) => doc.id !== id));
+    onUpload?.();            // ← notify parent (storage drops)
   };
 
   return (

@@ -338,10 +338,12 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
 
 @router.get("/system")
 def admin_system(admin=Depends(require_admin)):
-    # MongoDB collection stats
+    import os, psutil
+    from config import UPLOAD_DIR          # same constant used in documents.py
+ 
+    # ── MongoDB collection stats ──────────────────────────────────────────────
     mongo_collections = []
     try:
-        db_stats = mongodb.command("dbstats")
         for col_name in mongodb.list_collection_names():
             col_stats = mongodb.command("collstats", col_name)
             mongo_collections.append({
@@ -351,54 +353,247 @@ def admin_system(admin=Depends(require_admin)):
             })
     except Exception:
         mongo_collections = []
-
-    # FAISS indexes
-    faiss_indexes = []
+ 
+    # ── FAISS — scan vector_store directory directly ──────────────────────────
+    # Structure: vector_store/user_{id}/session_{sid}/index.faiss
+    faiss_total_indexes = 0
+    faiss_total_size_mb = 0.0
+    # user_breakdown maps user folder → {indexes, size_mb}
+    from collections import defaultdict
+    user_faiss: dict = defaultdict(lambda: {"indexes": 0, "size_mb": 0.0})
+ 
+    vector_root = os.path.join(os.getcwd(), "vector_store")
     try:
-        faiss_indexes = get_all_indexes()  # returns list of {bot_id, vectors, size_mb}
+        if os.path.isdir(vector_root):
+            for user_dir in os.scandir(vector_root):
+                if not user_dir.is_dir():
+                    continue
+                for session_dir in os.scandir(user_dir.path):
+                    if not session_dir.is_dir():
+                        continue
+                    faiss_file = os.path.join(session_dir.path, "index.faiss")
+                    if os.path.exists(faiss_file):
+                        size_mb = os.path.getsize(faiss_file) / (1024 * 1024)
+                        faiss_total_indexes += 1
+                        faiss_total_size_mb += size_mb
+                        user_faiss[user_dir.name]["indexes"] += 1
+                        user_faiss[user_dir.name]["size_mb"] = round(
+                            user_faiss[user_dir.name]["size_mb"] + size_mb, 2
+                        )
+    except Exception:
+        pass  # leave zeros if scanning fails
+ 
+    faiss_user_breakdown = [
+        {"user": user, "indexes": v["indexes"], "size_mb": round(v["size_mb"], 2)}
+        for user, v in sorted(user_faiss.items())
+    ]
+ 
+    # ── Uploads — scan the uploads directory for real file count + size ───────
+    upload_file_count = 0
+    upload_size_mb    = 0.0
+    try:
+        if os.path.isdir(UPLOAD_DIR):
+            for entry in os.scandir(UPLOAD_DIR):
+                if entry.is_file():
+                    upload_file_count += 1
+                    upload_size_mb    += entry.stat().st_size / (1024 * 1024)
     except Exception:
         pass
-
-    # System resources
-    cpu_pct = psutil.cpu_percent(interval=0.5)
-    ram     = psutil.virtual_memory()
-    disk    = psutil.disk_usage("/")
-
+ 
+    # ── System resources ──────────────────────────────────────────────────────
+    try:
+        cpu_pct = psutil.cpu_percent(interval=0.5)
+        ram     = psutil.virtual_memory()
+        disk    = psutil.disk_usage("/")
+        cpu  = round(cpu_pct, 1)
+        ram_ = round(ram.percent, 1)
+        disk_= round(disk.percent, 1)
+    except Exception:
+        cpu = ram_ = disk_ = 0.0
+ 
     return {
         "mongo_collections": mongo_collections,
-        "faiss_indexes":     faiss_indexes,
-        "cpu_pct":           round(cpu_pct, 1),
-        "ram_pct":           round(ram.percent, 1),
-        "disk_pct":          round(disk.percent, 1),
+        "faiss": {
+            "total_indexes":  faiss_total_indexes,
+            "total_size_mb":  round(faiss_total_size_mb, 2),
+            "user_breakdown": faiss_user_breakdown,
+        },
         "uploads": {
-            "file_count": 0
-        }    }
+            "file_count": upload_file_count,
+            "size_mb":    round(upload_size_mb, 2),
+        },
+        "cpu_pct":  cpu,
+        "ram_pct":  ram_,
+        "disk_pct": disk_,
+    }
 
 
 # ── /admin/feedback ───────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend/routers/admin.py  — REPLACE the two feedback functions at the bottom
+# with these versions. The original code queries SQLAlchemy WidgetFeedback but
+# feedback is stored in MongoDB ("widget_feedback" collection).
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/feedback")
 def admin_feedback(admin=Depends(require_admin), db: Session = Depends(get_db)):
-    rows = (
-        db.query(WidgetFeedback, WidgetBot.name)
-        .join(WidgetBot, WidgetBot.id == WidgetFeedback.bot_id)
-        .order_by(desc(WidgetFeedback.created_at))
-        .limit(200)
-        .all()
+    """All feedback — reads from MongoDB where it is actually stored."""
+    try:
+        col = mongodb["widget_feedback"]
+        rows = list(col.find({}, {"_id": 0}).sort("created_at", -1).limit(500))
+    except Exception:
+        rows = []
+
+    # Enrich with bot name from Postgres (cached per bot_id)
+    bot_cache: dict = {}
+    for row in rows:
+        bid = row.get("bot_id", "")
+        if bid and bid not in bot_cache:
+            bot_obj = db.query(WidgetBot).filter_by(id=bid).first()
+            bot_cache[bid] = bot_obj.name if bot_obj else bid
+        row["bot_name"] = bot_cache.get(bid, bid)
+
+    # Aggregate per-bot (matches what AdminFeedback.tsx expects)
+    from collections import defaultdict
+    bots_map: dict = defaultdict(lambda: {
+        "bot_id": "",
+        "bot_name": "",
+        "avg_score": 0.0,
+        "total_feedback": 0,
+        "feedback_list": [],
+    })
+
+    for row in rows:
+        bid = row.get("bot_id", "unknown")
+        entry = bots_map[bid]
+        entry["bot_id"]   = bid
+        entry["bot_name"] = row.get("bot_name", bid)
+        entry["total_feedback"] += 1
+        entry["feedback_list"].append({
+            "id":         row.get("id", ""),
+            "bot_id":     bid,
+            "user_name":  row.get("user_name", ""),
+            "rating":     row.get("rating", 0),
+            "comment":    row.get("comment", ""),
+            "category":   row.get("category", ""),
+            "created_at": str(row.get("created_at", "")),
+        })
+
+    for entry in bots_map.values():
+        ratings = [f["rating"] for f in entry["feedback_list"]]
+        entry["avg_score"] = round(sum(ratings) / len(ratings), 2) if ratings else 0.0
+
+    overall_avg = (
+        round(sum(r.get("rating", 0) for r in rows) / len(rows), 2) if rows else 0.0
     )
-    feedback = [
-        {
-            "id":         f.id,
-            "bot_name":   bot_name,
-            "rating":     f.rating,
-            "comment":    f.comment,
-            "category":   f.category,
-            "user_name":  f.user_name,
-            "created_at": f.created_at.isoformat(),
-        }
-        for f, bot_name in rows
-    ]
-    avg_score = (
-        db.query(func.avg(WidgetFeedback.rating)).scalar() or 0
-    )
-    return {"feedback": feedback, "avg_score": round(float(avg_score), 2)}
+
+    return {"feedback": list(bots_map.values()), "avg_score": overall_avg}
+
+
+@router.delete("/feedback/{bot_id}")
+def delete_bot_feedback(bot_id: str, admin=Depends(require_admin)):
+    """Delete all feedback for a specific bot from MongoDB."""
+    result = mongodb["widget_feedback"].delete_many({"bot_id": bot_id})
+    return {"ok": True, "deleted": result.deleted_count}
+
+# Billing ---------------------
+
+@router.get("/billing")
+def admin_billing(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    """
+    Per-client billing / usage summary.
+    Returns the shape AdminBilling.tsx expects:
+      { clients: [ { email, messages_count, docs_count, sessions_count,
+                     storage_mb, plan_tier, name } ] }
+    """
+    import os
+    from datetime import timedelta
+    from database import documents_collection
+ 
+    now   = datetime.utcnow()
+    m_ago = now - timedelta(days=30)
+ 
+    users = db.query(UserModel).order_by(UserModel.created_at.desc()).all()
+ 
+    clients = []
+    for u in users:
+        # Plan
+        sub  = db.query(Subscription).filter_by(owner_id=u.id, status="active").first()
+        plan = sub.plan.lower() if sub else "free"
+ 
+        # Bots owned by this user
+        bots    = db.query(WidgetBot).filter_by(owner_id=u.id).all()
+        bot_ids = [b.id for b in bots]
+ 
+        # Message count (last 30 days) from MongoDB widget_messages
+        messages_count = 0
+        sessions_set   = set()
+        try:
+            col = mongodb["widget_messages"]
+            messages_count = col.count_documents({
+                "bot_id": {"$in": bot_ids},
+                "created_at": {"$gte": m_ago},
+            }) if bot_ids else 0
+ 
+            # Unique sessions
+            if bot_ids:
+                sessions_set = set(
+                    col.distinct("session_id", {"bot_id": {"$in": bot_ids}})
+                )
+        except Exception:
+            pass
+ 
+        # Document count + storage from MongoDB documents_collection
+        docs_count = 0
+        storage_mb = 0.0
+        try:
+            docs_cursor = list(
+                documents_collection.find(
+                    {"user_id": {"$in": bot_ids}},
+                    {"size": 1, "path": 1, "type": 1, "_id": 0},
+                )
+            ) if bot_ids else []
+ 
+            docs_count = len(docs_cursor)
+ 
+            total_bytes = 0
+            for d in docs_cursor:
+                if d.get("type") == "url":
+                    continue
+                file_path = d.get("path", "")
+                if file_path and os.path.exists(file_path):
+                    total_bytes += os.path.getsize(file_path)
+                else:
+                    raw = str(d.get("size", "0"))
+                    try:
+                        parts = raw.strip().split()
+                        num  = float(parts[0])
+                        unit = parts[1].upper() if len(parts) > 1 else "KB"
+                        if "GB" in unit:
+                            total_bytes += int(num * 1024 * 1024 * 1024)
+                        elif "MB" in unit:
+                            total_bytes += int(num * 1024 * 1024)
+                        else:
+                            total_bytes += int(num * 1024)
+                    except Exception:
+                        pass
+            storage_mb = round(total_bytes / (1024 * 1024), 2)
+        except Exception:
+            pass
+ 
+        clients.append({
+            "name":           u.name or u.email.split("@")[0],
+            "email":          u.email,
+            "plan_tier":      plan,
+            "mrr":            PLAN_MRR.get(plan, 0),
+            "messages_count": messages_count,
+            "docs_count":     docs_count,
+            "sessions_count": len(sessions_set),
+            "storage_mb":     storage_mb,
+        })
+ 
+    # Sort by MRR desc, then message count
+    clients.sort(key=lambda c: (-c["mrr"], -c["messages_count"]))
+ 
+    return {"clients": clients}
+ 

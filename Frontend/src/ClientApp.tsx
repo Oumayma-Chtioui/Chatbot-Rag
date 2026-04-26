@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ClientLogin from "./ClientLogin";
 import ClientDashboard from "./ClientDashboard";
 import ClientDocuments from "./ClientDocuments";
@@ -8,7 +8,7 @@ import "./client-style.css";
 import ClientTickets from "./ClientTickets";
 import { useTheme } from "./UseTheme";
 
-export type ClientPage = "dashboard" | "documents" | "widget" |  "feedback" | "tickets";
+export type ClientPage = "dashboard" | "documents" | "widget" | "feedback" | "tickets";
 
 export interface ClientUser {
   id: number;
@@ -36,13 +36,16 @@ export default function ClientApp() {
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Close sidebar on route change (mobile UX)
+  // ── Dashboard refresh key — incrementing it re-mounts the dashboard
+  //    which triggers a fresh analytics fetch including updated storage/doc count
+  const [dashboardKey, setDashboardKey] = useState(0);
+  const refreshDashboard = useCallback(() => setDashboardKey((k) => k + 1), []);
+
   const navigate = (p: ClientPage) => {
     setPage(p);
     setSidebarOpen(false);
   };
 
-  // Close sidebar on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSidebarOpen(false); };
     window.addEventListener("keydown", onKey);
@@ -67,13 +70,12 @@ export default function ClientApp() {
     setBot(null);
   };
 
-  const [theme, toggleTheme] = useTheme()
+  const [theme, toggleTheme] = useTheme();
 
   if (!authed) return <ClientLogin onLogin={handleLogin} />;
 
   return (
     <div className="cl-layout">
-      {/* Overlay — clicking it closes the sidebar */}
       <div
         className={`cl-sidebar-overlay${sidebarOpen ? " open" : ""}`}
         onClick={() => setSidebarOpen(false)}
@@ -114,18 +116,17 @@ export default function ClientApp() {
             </div>
           </div>
           <button
-              className="cl-theme-toggle"
-              onClick={toggleTheme}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            >
-              {theme === "dark" ? "☀️" : "🌙"}
-            </button>
+            className="cl-theme-toggle"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
           <button className="cl-logout" onClick={handleLogout}>Sign out</button>
         </div>
       </aside>
 
       <main className="cl-main">
-        {/* Mobile topbar with hamburger — always visible on mobile */}
         <div className="cl-mobile-topbar">
           <button
             className="cl-hamburger"
@@ -137,8 +138,14 @@ export default function ClientApp() {
           <span className="cl-mobile-title">NovaMind</span>
         </div>
 
-        {page === "dashboard"  && bot && <ClientDashboard bot={bot} />}
-        {page === "documents"  && bot && <ClientDocuments bot={bot} />}
+        {/* key prop forces re-mount (fresh fetch) whenever a document is mutated */}
+        {page === "dashboard"  && bot && <ClientDashboard key={dashboardKey} bot={bot} />}
+        {page === "documents"  && bot && (
+          <ClientDocuments
+            bot={bot}
+            onUpload={refreshDashboard}   // ← triggers dashboard refresh
+          />
+        )}
         {page === "widget"     && bot && <ClientWidget bot={bot} setBot={setBot} user={user} />}
         {page === "feedback"   && bot && <ClientFeedback bot={bot} />}
         {page === "tickets"    && <ClientTickets />}

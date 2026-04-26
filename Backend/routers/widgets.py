@@ -608,7 +608,53 @@ async def get_advanced_analytics(
             for name, count in doc_citation_counts.most_common(10)
         ]
 
-        # ── NEW: Real quota numbers ────────────────────────────────────────────
+        # ── Real quota numbers ────────────────────────────────────────────────
+        from database import documents_collection as docs_col
+        real_doc_count = docs_col.count_documents({"user_id": bot_id})
+ 
+        # Storage: prefer actual file size on disk; fall back to stored "size" string
+        docs_cursor = list(docs_col.find({"user_id": bot_id}, {"size": 1, "path": 1, "type": 1, "_id": 0}))
+        total_bytes = 0
+        for d in docs_cursor:
+            # URL docs have no file on disk — skip
+            if d.get("type") == "url":
+                continue
+            file_path = d.get("path", "")
+            if file_path and os.path.exists(file_path):
+                # Most accurate — read the actual file size
+                total_bytes += os.path.getsize(file_path)
+            else:
+                # Fallback: parse stored size string ("12.3 KB" / "1.2 MB")
+                raw = str(d.get("size", "0"))
+                try:
+                    parts = raw.strip().split()
+                    num  = float(parts[0])
+                    unit = parts[1].upper() if len(parts) > 1 else "KB"
+                    if "GB" in unit:
+                        total_bytes += int(num * 1024 * 1024 * 1024)
+                    elif "MB" in unit:
+                        total_bytes += int(num * 1024 * 1024)
+                    else:  # KB default
+                        total_bytes += int(num * 1024)
+                except Exception:
+                    pass
+ 
+        storage_mb = round(total_bytes / (1024 * 1024), 2)
+ 
+        # API keys count
+        from models.widget import WidgetApiKey
+        api_key_count = db.query(WidgetApiKey).filter_by(bot_id=bot_id, is_active=True).count()
+ 
+        quota = {
+            "messages_used":    total,
+            "messages_limit":   5000,
+            "docs_used":        real_doc_count,
+            "docs_limit":       50,
+            "storage_mb":       storage_mb,
+            "storage_limit_mb": 5120,   # 5 GB
+            "api_keys_used":    api_key_count,
+            "api_keys_limit":   5,
+        }# ── NEW: Real quota numbers ────────────────────────────────────────────
         from database import documents_collection as docs_col
         real_doc_count = docs_col.count_documents({"user_id": bot_id})
 
