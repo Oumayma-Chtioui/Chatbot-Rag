@@ -10,7 +10,7 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-
+  const [successMsg, setSuccessMsg] = useState<string>("");
 
 
   const handleSubmit = async (): Promise<void> => {
@@ -45,11 +45,16 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
         return;
       }
 
-      // Store token and user info
+      if (tab === "signup") {
+        setSuccessMsg("Check your email to verify your account before signing in.");
+        setForm({ name: "", email: "", password: "" });
+        setTab("login");
+        return;
+      }
+
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("user", JSON.stringify({ name: data.name, email: data.email, is_admin: data.is_admin }));
-
-      onLogin(data.name, data.is_admin); // Pass admin flag to parent
+      onLogin(data.name, data.is_admin);
     } catch (err) {
       setError("Could not connect to the server. Is the backend running?");
     } finally {
@@ -157,6 +162,12 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             />
           </div>
+          
+          {successMsg && (
+            <div style={{ color: "var(--success)", fontSize: 13, marginBottom: 14, padding: "10px 14px", background: "#4ade8011", borderRadius: 8, border: "1px solid #4ade8033" }}>
+              {successMsg}
+            </div>
+          )}
 
           {error && (
             <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 14, padding: "10px 14px", background: "#ff557211", borderRadius: 8, border: "1px solid #ff557233" }}>

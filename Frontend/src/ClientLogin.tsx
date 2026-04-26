@@ -15,7 +15,7 @@ export default function ClientLogin({ onLogin }: Props) {
   const [botName, setBotName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
+  const [successMsg, setSuccessMsg] = useState("")
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -23,7 +23,6 @@ export default function ClientLogin({ onLogin }: Props) {
 
     try {
       if (mode === "register") {
-        // 1. Register user with role=client
         const regRes = await fetch(`${API}/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -33,6 +32,12 @@ export default function ClientLogin({ onLogin }: Props) {
           const e = await regRes.json();
           throw new Error(e.detail || "Registration failed");
         }
+        // STOP HERE — show message, don't proceed to login
+        setError(""); 
+        setMode("login");
+        // add a success state to show the message
+        setSuccessMsg("Check your email to verify your account before signing in.");
+        return;  // ← this is the key line, was missing
       }
 
       // 2. Login to get token

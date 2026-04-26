@@ -93,3 +93,22 @@ def send_answer_to_user(
     </div>
     """
     _send(user_email, f"Réponse à votre question — {bot_name}", html)
+
+
+# auth
+
+def send_verification_email(email: str, name: str, token: str):
+    verify_url = f"{APP_URL}/verify-email/{token}"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:32px">
+      <h2>Verify your email</h2>
+      <p>Hi {name}, click the button below to verify your account:</p>
+      <a href="{verify_url}" style="display:inline-block;background:{BRAND_COLOR};
+         color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;
+         font-weight:600;margin:20px 0">
+        Verify Email
+      </a>
+      <p style="color:#888;font-size:13px">This link expires in 24 hours.</p>
+    </div>
+    """
+    _send(email, "Verify your NovaMind account", html)

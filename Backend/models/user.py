@@ -33,6 +33,12 @@ class UserModel(Base):
     bots         = relationship("WidgetBot",        back_populates="owner", cascade="all, delete")
     feedback     = relationship("WidgetFeedback",   back_populates="user")
     subscription = relationship("Subscription",     back_populates="owner", uselist=False)
+    
+    is_verified = Column(Boolean, default=False)
+    verified_at = Column(DateTime, nullable=True)
+    verification_token  = Column(String, nullable=True)
+
+    verification_token_expires = Column(DateTime, nullable=True)
 
 
 class ChatSessionModel(Base):

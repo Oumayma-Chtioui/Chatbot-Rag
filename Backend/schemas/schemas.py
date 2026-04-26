@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
 class RegisterRequest(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
 
 class LoginRequest(BaseModel):
