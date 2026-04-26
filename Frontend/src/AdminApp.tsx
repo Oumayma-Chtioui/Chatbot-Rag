@@ -11,11 +11,13 @@ import AdminTestBot from "./AdminTestBot";
 import * as api from "./api";
 import { getAdminOverview, AdminOverviewData } from "./Adminapi";
 import { useTheme } from "./UseTheme";
+import AdminUsers2 from "./AdminUsers2";
 
 const adminToken = () => localStorage.getItem("admin_token");
 
 const tabItems = [
   { key: "overview", label: "Overview", icon: "◈" },
+  { key: "users",    label: "Users",    icon: "👥" },
   { key: "chatbots", label: "Chatbots", icon: "◉" },
   { key: "feedback", label: "Feedback", icon: "✦" },
   { key: "billing",  label: "Billing",  icon: "◎" },
@@ -34,7 +36,7 @@ export default function AdminApp() {
   const [adminName, setAdminName] = useState<string>(() => {
     try { return JSON.parse(localStorage.getItem("admin_user") || "null")?.name || ""; } catch { return ""; }
   });
-  const VALID_TABS = ["overview", "chatbots", "feedback", "billing", "system", "testbot"];
+  const VALID_TABS = ["overview", "users", "chatbots", "feedback", "billing", "system", "testbot"];
 
   const [tab, setTab] = useState<typeof tabItems[number]["key"]>(() => {
     const saved = localStorage.getItem("admin_tab");
@@ -135,6 +137,9 @@ export default function AdminApp() {
       if (activeTab === "system") {
         setSystem(await api.getSystemHealth());
       }
+      if (activeTab === "users") {
+  // data is fetched inside the component itself
+    }
     } catch (err: any) {
       setError(err.message || "Could not load admin data.");
     } finally {
@@ -146,7 +151,7 @@ export default function AdminApp() {
     return <AdminLogin onLogin={handleLogin} />;
   }
   const tabLabelMap: Record<string, string> = {
-    overview: "Overview", chatbots: "Chatbots", feedback: "Feedback",
+    overview: "Overview",users:    "Users",  chatbots: "Chatbots", feedback: "Feedback",
     billing: "Billing",   system: "System",      testbot: "Test Bot",
   };
 
@@ -202,6 +207,7 @@ export default function AdminApp() {
           {error && <div className="cl-error">{error}</div>}
 
           {tab === "overview" && <AdminOverview stats={stats} loading={loading} />}
+          {tab === "users" && (<AdminUsers2 onViewBot={(bot) => { setTab("chatbots"); setSelectedChatbot(bot);}}/>)}
           {tab === "chatbots" && (selectedChatbot
             ? <AdminBotDashboard bot={selectedChatbot} onBack={() => setSelectedChatbot(null)} />
             : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={setSelectedChatbot} />

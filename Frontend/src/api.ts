@@ -188,11 +188,6 @@ export async function getSessionDocuments(sessionId: string): Promise<any> {
   if (!res.ok) throw new Error("Failed to fetch session documents");
   return await res.json();
   
-  if (!res.ok) {
-    throw new Error("Failed to fetch session documents");
-  }
-  
-  return await res.json();
 }
 
 /**

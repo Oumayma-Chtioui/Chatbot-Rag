@@ -12,6 +12,9 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   const [documents, setDocuments] = useState<any[]>([]);
   const [system, setSystem] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingBotId, setPendingBotId] = useState<string | null>(null);
+  const [selectedChatbot, setSelectedChatbot] = useState<any>(null);
+  const [bots, setBots] = useState<any[]>([]);
 
   useEffect(() => {
     loadTab(tab);
@@ -25,6 +28,17 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
       if (t === "documents") {
         const data = await api.getAdminDocuments();
         setDocuments(data.documents);
+      }
+      if (t === "chatbots") {
+        const data = await api.getAdminBots();
+        setBots(data.bots || []);
+        
+        // if redirected from users tab, auto-select that bot
+        if (pendingBotId) {
+          const target = data.bots?.find((b: any) => b.id === pendingBotId);
+          if (target) setSelectedChatbot(target);
+          setPendingBotId(null);
+        }
       }
       if (t === "system") setSystem(await api.getSystemHealth());
     } catch (err) {
@@ -183,8 +197,45 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text2)" }}>{u.name}</div>
                     <div style={{ fontSize: 11, color: "var(--text3)" }}>{u.email}</div>
+                    <div style={{ fontSize: 11, color: "var(--text3)" }}>
+                      {u.session_count} sessions · joined {new Date(u.created_at).toLocaleDateString()}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text3)" }}>{u.session_count} sessions</div>
+
+                  {/* bot info */}
+                  {u.bot ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ fontSize: 11, color: "var(--text3)", textAlign: "right" }}>
+                        <div style={{ color: "var(--text2)", fontWeight: 500 }}>{u.bot.name}</div>
+                        <div>{u.bot.doc_count} docs · {u.bot.message_count} messages</div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setTab("chatbots" as any);
+                          // you'll need to add this state
+                          setPendingBotId(u.bot.id);
+                        }}
+                        style={{
+                          background: "var(--accent)", border: "none",
+                          borderRadius: 6, color: "white",
+                          padding: "6px 12px", cursor: "pointer",
+                          fontSize: 12, fontWeight: 600,
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        View Bot →
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{
+                      fontSize: 11, padding: "4px 10px",
+                      borderRadius: 6, border: "1px solid var(--border)",
+                      color: "var(--text3)"
+                    }}>
+                      No bot yet
+                    </div>
+                  )}
+
                   {u.is_admin && (
                     <span style={{
                       fontSize: 10, padding: "2px 8px", borderRadius: 4,

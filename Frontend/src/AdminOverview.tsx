@@ -159,7 +159,7 @@ const AdminOverview: React.FC<Props> = ({ stats, loading }) => {
         <Metric label="Revenue this month" value={`$${data.revenue_this_month.toLocaleString()}`}
           sub={`vs $${data.revenue_last_month.toLocaleString()} last month`} accent="#1D9E75" />
         <Metric label="Total users"      value={data.total_users}      sub={`+${data.new_users_this_month} this month`} />
-        <Metric label="Active bots"      value={data.active_bots}      sub={`${data.total_bots} total`} />
+        <Metric label="Total bots" value={data.total_bots} />
         <Metric label="Messages / month" value={data.messages_this_month.toLocaleString()} sub={`${data.total_messages.toLocaleString()} total`} />
       </div>
 

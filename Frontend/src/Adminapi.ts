@@ -22,7 +22,6 @@ export interface AdminOverviewData {
   new_users_this_month: number;
 
   total_bots: number;
-  active_bots: number;
 
   total_messages: number;
   messages_this_month: number;

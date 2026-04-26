@@ -21,7 +21,7 @@ from typing import Optional
 import psutil
 
 from database import get_db, mongodb
-from models.user import UserModel
+from models.user import UserModel, ChatSessionModel
 from models.widget import WidgetBot, WidgetMessage, WidgetFeedback
 from models.billing import Subscription        # adjust to your billing model
 from auth.helpers import get_current_user
@@ -80,11 +80,7 @@ def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
 
     # bots
     total_bots  = db.query(func.count(WidgetBot.id)).scalar() or 0
-    active_bots = (
-        db.query(func.count(func.distinct(WidgetMessage.bot_id)))
-        .filter(WidgetMessage.created_at >= m_ago)
-        .scalar() or 0
-    )
+   
 
     # messages
     total_messages        = db.query(func.count(WidgetMessage.id)).scalar() or 0
@@ -202,7 +198,6 @@ def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
         "total_users":          total_users,
         "new_users_this_month": new_users_this_month,
         "total_bots":           total_bots,
-        "active_bots":          active_bots,
         "total_messages":       total_messages,
         "messages_this_month":  messages_this_month,
         "mrr":                  mrr,
@@ -597,3 +592,33 @@ def admin_billing(admin=Depends(require_admin), db: Session = Depends(get_db)):
  
     return {"clients": clients}
  
+@router.get("/users")
+def get_users(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    users = db.query(UserModel).order_by(UserModel.created_at.desc()).all()
+    result = []
+    for u in users:
+        # get their bot if exists
+        bot = db.query(WidgetBot).filter_by(owner_id=u.id, is_active=True).first()
+        
+        session_count = db.query(func.count(ChatSessionModel.id)).filter_by(
+            user_id=u.id
+        ).scalar() or 0
+
+        result.append({
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "is_admin": u.is_admin,
+            "is_verified": u.is_verified,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "session_count": session_count,
+            "bot": {
+                "id": bot.id,
+                "name": bot.name,
+                "doc_count": bot.docs_indexed or 0,
+                "message_count": db.query(func.count(WidgetMessage.id)).filter_by(
+                    bot_id=bot.id
+                ).scalar() or 0
+            } if bot else None
+        })
+    return result
