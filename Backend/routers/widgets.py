@@ -482,57 +482,47 @@ async def get_advanced_analytics(
     db: Session = Depends(get_db),
 ):
     try:
-        # 1. Ownership check
         bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
- 
-        # 2. Load messages — cursor to list, limit 5000
+
         messages = list(
             mongodb["widget_messages"]
             .find({"bot_id": bot_id}, {"_id": 0})
             .sort("created_at", -1)
             .limit(5000)
         )
- 
+
         total = len(messages)
- 
-        # 3. Answered/unanswered
-        # Support BOTH old docs (no "answered" field) and new ones
+
+        # ── Answered / unanswered ──────────────────────────────────────────────
         success_list = []
         failure_list = []
- 
         for m in messages:
-            answered_flag = m.get("answered")           # None if field missing
-            question = m.get("question") or ""
-            answer   = m.get("answer")   or ""
- 
+            answered_flag = m.get("answered")
             if answered_flag is None:
-                # Old document — compute on the fly from the stored answer
-                answered_flag = _is_answered(answer)
- 
+                answered_flag = _is_answered(m.get("answer") or "")
             if answered_flag:
                 success_list.append(m)
             else:
                 failure_list.append(m)
- 
+
         success_count = len(success_list)
         failure_count = len(failure_list)
         success_rate  = round(success_count / total * 100, 1) if total > 0 else 0.0
- 
-        # 4. Top keywords — prefer stored field, fall back to live extraction
+
+        # ── Keywords ───────────────────────────────────────────────────────────
         all_keywords = []
         for m in messages:
             kws = m.get("keywords")
-            if kws:                                     # new doc — already extracted
+            if kws:
                 all_keywords.extend(kws)
-            else:                                       # old doc — extract now
+            else:
                 all_keywords.extend(_extract_keywords(m.get("question") or ""))
- 
         kw_counts    = Counter(all_keywords)
         top_keywords = [{"word": w, "count": c} for w, c in kw_counts.most_common(20)]
- 
-        # 5. Unanswered questions (most recent 25, safe date serialization)
+
+        # ── Unanswered questions ───────────────────────────────────────────────
         unanswered = [
             {
                 "question":   m.get("question") or "",
@@ -540,15 +530,15 @@ async def get_advanced_analytics(
             }
             for m in failure_list
         ][-25:]
- 
-        # 6. Avg messages per session
+
+        # ── Avg messages per session ───────────────────────────────────────────
         session_counts = Counter(m.get("session_id") or "unknown" for m in messages)
         avg_messages   = (
             round(sum(session_counts.values()) / len(session_counts), 1)
             if session_counts else 0.0
         )
- 
-        # 7. Pending tickets — collection may not exist yet → default to 0
+
+        # ── Pending tickets ────────────────────────────────────────────────────
         try:
             pending_tickets = mongodb["intervention_tickets"].count_documents({
                 "bot_id": bot_id,
@@ -556,7 +546,104 @@ async def get_advanced_analytics(
             })
         except Exception:
             pending_tickets = 0
- 
+
+        # ── NEW: Response times per day ────────────────────────────────────────
+        # Group messages that have a response_time_ms field by calendar day.
+        from collections import defaultdict
+        rt_by_day = defaultdict(list)
+        for m in messages:
+            rt = m.get("response_time_ms")
+            if rt is None:
+                continue
+            created = m.get("created_at")
+            if hasattr(created, "strftime"):
+                day_key = created.strftime("%Y-%m-%d")
+            else:
+                # stored as string
+                day_key = str(created)[:10]
+            rt_by_day[day_key].append(rt)
+
+        # Build last-30-days series (fill gaps with None so the frontend can skip them)
+        from datetime import timedelta
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        response_times = []
+        for i in range(29, -1, -1):
+            day = today - timedelta(days=i)
+            key = day.strftime("%Y-%m-%d")
+            times = rt_by_day.get(key, [])
+            response_times.append({
+                "date":   key,
+                "avg_ms": round(sum(times) / len(times)) if times else None,
+                "count":  len(times),
+            })
+
+        # ── NEW: Messages per day (last 30 days) ──────────────────────────────
+        msg_by_day = defaultdict(int)
+        for m in messages:
+            created = m.get("created_at")
+            if hasattr(created, "strftime"):
+                day_key = created.strftime("%Y-%m-%d")
+            else:
+                day_key = str(created)[:10]
+            msg_by_day[day_key] += 1
+
+        messages_per_day = []
+        for i in range(29, -1, -1):
+            day = today - timedelta(days=i)
+            key = day.strftime("%Y-%m-%d")
+            messages_per_day.append({"date": key, "count": msg_by_day.get(key, 0)})
+
+        # ── NEW: Document usage (citation counts) ──────────────────────────────
+        # Count how many messages cited each source document.
+        doc_citation_counts: Counter = Counter()
+        for m in messages:
+            source_docs = m.get("source_docs", [])
+            # De-duplicate per message so one long answer doesn't inflate a doc's count
+            for doc_name in set(source_docs):
+                if doc_name:
+                    doc_citation_counts[doc_name] += 1
+
+        document_usage = [
+            {"name": name, "citations": count}
+            for name, count in doc_citation_counts.most_common(10)
+        ]
+
+        # ── NEW: Real quota numbers ────────────────────────────────────────────
+        from database import documents_collection as docs_col
+        real_doc_count = docs_col.count_documents({"user_id": bot_id})
+
+        # Rough storage: sum file sizes stored in MongoDB doc records (KB field).
+        docs_cursor = list(docs_col.find({"user_id": bot_id}, {"size": 1, "_id": 0}))
+        total_kb = 0.0
+        for d in docs_cursor:
+            raw = d.get("size", "0")
+            # size is stored as "12.3 KB" or "1.2 MB"
+            try:
+                num, unit = str(raw).split()
+                num = float(num)
+                if "MB" in unit.upper():
+                    total_kb += num * 1024
+                else:
+                    total_kb += num
+            except Exception:
+                pass
+        storage_mb = round(total_kb / 1024, 2)
+
+        # API keys count
+        from models.widget import WidgetApiKey
+        api_key_count = db.query(WidgetApiKey).filter_by(bot_id=bot_id, is_active=True).count()
+
+        quota = {
+            "messages_used":  total,
+            "messages_limit": 5000,
+            "docs_used":      real_doc_count,
+            "docs_limit":     50,
+            "storage_mb":     storage_mb,
+            "storage_limit_mb": 5120,   # 5 GB
+            "api_keys_used":  api_key_count,
+            "api_keys_limit": 5,
+        }
+
         return {
             "total":                    total,
             "success_count":            success_count,
@@ -567,8 +654,13 @@ async def get_advanced_analytics(
             "avg_messages_per_session": avg_messages,
             "total_sessions":           len(session_counts),
             "pending_tickets":          pending_tickets,
+            # NEW ↓
+            "response_times":           response_times,
+            "messages_per_day":         messages_per_day,
+            "document_usage":           document_usage,
+            "quota":                    quota,
         }
- 
+
     except HTTPException:
         raise
     except Exception as e:

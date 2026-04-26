@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -106,6 +106,9 @@ async def widget_chat(
     doc_session_id  = f"bot_{bot.id}"
     chat_session_id = req.session_id or f"widget_{uuid.uuid4()}"
 
+     # ── Time the RAG call ──────────────────────────────────────────────────────
+    t_start = time.monotonic()
+
     try:
         result = generate_answer(
             question=req.message,
@@ -116,6 +119,24 @@ async def widget_chat(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    response_time_ms = int((time.monotonic() - t_start) * 1000)
+
+    answered = is_question_answered(result.get("answer", ""))
+    keywords = extract_keywords(req.message)
+
+    # ── Extract source document names from RAG result ──────────────────────────
+    # sources is a list of dicts like {"source": "doc_name.pdf", "content_preview": "..."}
+    sources = result.get("sources", [])
+    source_names = []
+    for s in sources:
+        if isinstance(s, dict):
+            name = s.get("source", "")
+        else:
+            name = str(s)
+        # Store only the filename portion (strip paths)
+        if name:
+            source_names.append(name.split("/")[-1])
 
     # Save to MongoDB for analytics
     if mongodb is not None:
@@ -128,8 +149,10 @@ async def widget_chat(
                 "session_id": chat_session_id,
                 "question":   req.message,
                 "answer":     result.get("answer", ""),
-                "answered":   answered,      # ← NEW
-                "keywords":   keywords,      # ← NEW
+                "answered":   answered,      
+                "keywords":   keywords,      
+                "response_time_ms": response_time_ms,  # store response time
+                "sources":    source_names,   # store extracted source names
                 "created_at": datetime.utcnow(),
             })
         except Exception:

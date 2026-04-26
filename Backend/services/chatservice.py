@@ -138,6 +138,20 @@ def save_message(session_id: str, user_id, role: str, content: str):
         "timestamp": datetime.utcnow()
     })
 
+def save_widget_message(bot_id, session_id, question, answer, response_time_ms, docs):
+    from database import mongodb
+    col = mongodb["widget_messages"]
+
+    col.insert_one({
+        "bot_id": bot_id,
+        "session_id": session_id,
+        "question": question,
+        "answer": answer,
+        "created_at": datetime.utcnow(),
+        "response_time_ms": response_time_ms,
+        "source_docs": [doc.metadata.get("source", "Unknown") for doc in docs],
+    })
+
 
 # ─────────────────────────────────────────────────────────────
 # LLM loaders (unchanged from original)
@@ -355,6 +369,16 @@ Document context:
         t_gen_start   = time.time()
         answer, model = handle_timeout(system_prompt, question)
         gen_lat       = round(time.time() - t_gen_start, 3)
+        response_time_ms = int(gen_lat * 1000)
+
+        save_widget_message(
+            bot_id=user_id,   # ⚠️ IMPORTANT: replace this if needed (see below)
+            session_id=session_id,
+            question=question,
+            answer=answer,
+            response_time_ms=response_time_ms,
+            docs=docs
+        )
         total_lat     = round(time.time() - t_total_start, 3)
         logger.info(f"Answer generated in {gen_lat}s (total {total_lat}s) via {model}")
 

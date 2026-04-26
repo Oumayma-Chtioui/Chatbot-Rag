@@ -1,372 +1,404 @@
-import os
-import uuid
+"""
+routers/admin.py
+
+Admin-only endpoints for the dashboard.
+All routes require is_admin=True on the current user.
+
+Endpoints:
+  GET /admin/overview   – KPIs, top clients, activity feed
+  GET /admin/clients    – all clients with quota details + breakdown
+  PATCH /admin/clients/{id}/plan  – update plan
+  GET /admin/bots       – all bots with health metrics
+  GET /admin/system     – MongoDB + FAISS sizes, CPU/RAM/disk
+  GET /admin/feedback   – all feedback across all bots
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from datetime import datetime, timedelta
-from database import get_db, documents_collection, messages_collection
-from models.user import UserModel, ChatSessionModel, MessageModel
-from models.widget import WidgetBot, WidgetApiKey
-from auth.helpers import get_admin_user
-from auth.widget_auth import generate_api_key
-from database import get_db, documents_collection, messages_collection, mongodb
-import shutil
-router = APIRouter(prefix="/admin", tags=["Admin"])
+from typing import Optional
+import psutil
+
+from database import get_db, mongodb
+from models.user import UserModel
+from models.widget import WidgetBot, WidgetMessage, WidgetFeedback
+from models.billing import Subscription        # adjust to your billing model
+from auth.helpers import get_current_user
+from services.faiss_service import get_all_indexes  # adjust as needed
+
+router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-# ── User Management ───────────────────────────────────────────────────────────
+# ── Auth guard ────────────────────────────────────────────────────────────────
 
-@router.get("/users")
-def get_all_users(
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    users = db.query(UserModel).all()
+def require_admin(current_user: UserModel = Depends(get_current_user)) -> UserModel:
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+# ── Plan config (adjust prices to match your Stripe plans) ───────────────────
+
+PLAN_MRR = {"free": 0, "starter": 29, "growth": 79, "enterprise": 249}
+PLAN_QUOTAS = {
+    "free":       {"messages": 500,   "docs": 5,  "storage_gb": 0.5, "api_keys": 1},
+    "starter":    {"messages": 2000,  "docs": 20, "storage_gb": 2,   "api_keys": 3},
+    "growth":     {"messages": 5000,  "docs": 50, "storage_gb": 5,   "api_keys": 5},
+    "enterprise": {"messages": 50000, "docs": 500,"storage_gb": 50,  "api_keys": 20},
+}
+
+
+def _quota_breakdown(messages_used, messages_quota, docs_used, docs_quota, storage_used, storage_quota):
+    """
+    Build the per-segment usage breakdown for the donut chart.
+    Each segment is expressed as a % of its own quota, then normalised so the
+    three segments together sum to 100 when all quotas are fully used.
+    """
+    msg_pct = (messages_used / messages_quota * 100) if messages_quota else 0
+    doc_pct = (docs_used     / docs_quota     * 100) if docs_quota     else 0
+    sto_pct = (storage_used  / storage_quota  * 100) if storage_quota  else 0
+
+    total = msg_pct + doc_pct + sto_pct or 1   # avoid div/0
     return [
-        {
-            "id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "is_admin": u.is_admin,
-            "session_count": len(u.sessions),
-        }
-        for u in users
+        {"label": "Messages", "pct": round(msg_pct / total * 100, 1), "color": "#7F77DD"},
+        {"label": "Docs",     "pct": round(doc_pct / total * 100, 1), "color": "#BA7517"},
+        {"label": "Storage",  "pct": round(sto_pct / total * 100, 1), "color": "#1D9E75"},
     ]
 
 
-@router.delete("/users/{user_id}")
-def delete_user(
-    user_id: int,
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    user = db.query(UserModel).filter(UserModel.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    # 1. Collect session IDs before deletion (needed for MongoDB cleanup)
-    sessions = db.query(ChatSessionModel).filter(
-        ChatSessionModel.user_id == user_id
-    ).all()
-    session_ids = [s.id for s in sessions]
- 
-    # 2. Collect widget bots owned by this user
-    bots = db.query(WidgetBot).filter(WidgetBot.owner_id == user_id).all()
-    bot_ids = [b.id for b in bots]
- 
-    # 3. Delete PostgreSQL rows — cascade handles sessions, messages, api_keys
-    for bot in bots:
-        db.delete(bot)
-    db.delete(user)
-    db.commit()
- 
-    # 4. Delete MongoDB chat documents and messages
-    documents_collection.delete_many({"user_id": user_id})
-    if session_ids:
-        messages_collection.delete_many({"session_id": {"$in": session_ids}})
- 
-    # 5. Delete widget analytics / intervention data for this user's bots
-    if mongodb is not None and bot_ids:
-        mongodb["widget_messages"].delete_many({"bot_id": {"$in": bot_ids}})
-        mongodb["intervention_tickets"].delete_many({"bot_id": {"$in": bot_ids}})
-        # Also clean bot-scoped documents stored under bot_id as user_id
-        documents_collection.delete_many({"user_id": {"$in": bot_ids}})
- 
-    # 6. Delete FAISS vector stores from disk
-    vector_path = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}")
-    if os.path.exists(vector_path):
-        shutil.rmtree(vector_path, ignore_errors=True)
- 
-    # 7. Delete bot-scoped vector stores (stored under bot UUID)
-    for bot_id in bot_ids:
-        bot_vector_path = os.path.join(os.getcwd(), "vector_store", f"user_{bot_id}")
-        if os.path.exists(bot_vector_path):
-            shutil.rmtree(bot_vector_path, ignore_errors=True)
-    return {"ok": True}
+# ── /admin/overview ───────────────────────────────────────────────────────────
 
+@router.get("/overview")
+def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    now   = datetime.utcnow()
+    m_ago = now - timedelta(days=30)
 
-@router.patch("/users/{user_id}/toggle-admin")
-def toggle_admin(
-    user_id: int,
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    user = db.query(UserModel).filter(UserModel.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.is_admin = not user.is_admin
-    db.commit()
-    return {"id": user.id, "is_admin": user.is_admin}
+    # users
+    total_users         = db.query(func.count(UserModel.id)).scalar() or 0
+    new_users_this_month = db.query(func.count(UserModel.id)).filter(UserModel.created_at >= m_ago).scalar() or 0
 
+    # bots
+    total_bots  = db.query(func.count(WidgetBot.id)).scalar() or 0
+    active_bots = (
+        db.query(func.count(func.distinct(WidgetMessage.bot_id)))
+        .filter(WidgetMessage.created_at >= m_ago)
+        .scalar() or 0
+    )
 
-# ── Document Management ───────────────────────────────────────────────────────
+    # messages
+    total_messages        = db.query(func.count(WidgetMessage.id)).scalar() or 0
+    messages_this_month   = db.query(func.count(WidgetMessage.id)).filter(WidgetMessage.created_at >= m_ago).scalar() or 0
 
-@router.get("/documents")
-def get_all_documents(current_user: UserModel = Depends(get_admin_user)):
-    docs = list(documents_collection.find({}, {"_id": 0}))
-    return {"count": len(docs), "documents": docs}
+    # revenue — pulled from subscriptions table
+    subs = db.query(Subscription).filter(Subscription.status == "active").all()
+    mrr  = sum(PLAN_MRR.get(s.plan.lower(), 0) for s in subs)
+    arr  = mrr * 12
 
+    prev_month_start = (now.replace(day=1) - timedelta(days=1)).replace(day=1)
+    this_month_start = now.replace(day=1)
 
-@router.delete("/documents/{doc_id}")
-def admin_delete_document(
-    doc_id: str,
-    current_user: UserModel = Depends(get_admin_user)
-):
-    doc = documents_collection.find_one({"id": doc_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if doc.get("path") and doc.get("type") != "url":
-        if os.path.exists(doc["path"]):
-            os.remove(doc["path"])
-    documents_collection.delete_one({"id": doc_id})
-    return {"ok": True}
+    revenue_this_month = sum(
+        PLAN_MRR.get(s.plan.lower(), 0)
+        for s in subs
+        if s.created_at >= this_month_start or s.renewed_at >= this_month_start
+    ) if subs else mrr
 
+    revenue_last_month = sum(
+        PLAN_MRR.get(s.plan.lower(), 0)
+        for s in db.query(Subscription).filter(
+            Subscription.status == "active",
+            Subscription.created_at < this_month_start,
+        ).all()
+    ) or 0
 
-# ── Usage Statistics ──────────────────────────────────────────────────────────
+    revenue_change_pct = (
+        ((revenue_this_month - revenue_last_month) / revenue_last_month * 100)
+        if revenue_last_month > 0 else 0
+    )
 
-@router.get("/stats")
-def get_stats(
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    total_users = db.query(UserModel).count()
-    total_sessions = db.query(ChatSessionModel).count()
-    total_messages = db.query(MessageModel).count()
-    total_documents = documents_collection.count_documents({})
-    total_bots = db.query(WidgetBot).count()
+    # plan breakdown
+    plan_groups: dict[str, dict] = {}
+    for s in subs:
+        p = s.plan.lower()
+        if p not in plan_groups:
+            plan_groups[p] = {"plan": p, "count": 0, "revenue": 0}
+        plan_groups[p]["count"]   += 1
+        plan_groups[p]["revenue"] += PLAN_MRR.get(p, 0)
+    plan_breakdown = sorted(plan_groups.values(), key=lambda x: -x["revenue"])
 
-    # Messages per day (last 7 days)
-    messages_per_day = []
-    for i in range(6, -1, -1):
-        day = datetime.utcnow() - timedelta(days=i)
-        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day.replace(hour=23, minute=59, second=59)
-        count = db.query(MessageModel).filter(
-            MessageModel.created_at >= day_start,
-            MessageModel.created_at <= day_end,
-            MessageModel.role == "user"
-        ).count()
-        messages_per_day.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "count": count
+    # top 5 clients by MRR
+    top_users = (
+        db.query(UserModel)
+        .join(Subscription, Subscription.owner_id == UserModel.id)
+        .filter(Subscription.status == "active")
+        .order_by(desc(Subscription.plan))
+        .limit(10)
+        .all()
+    )
+
+    top_clients = []
+    for u in top_users:
+        sub     = db.query(Subscription).filter_by(owner_id=u.id, status="active").first()
+        plan    = sub.plan.lower() if sub else "free"
+        quotas  = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
+        bots    = db.query(WidgetBot).filter_by(owner_id=u.id).all()
+        bot_ids = [b.id for b in bots]
+
+        msgs_used = (
+            db.query(func.count(WidgetMessage.id))
+            .filter(WidgetMessage.bot_id.in_(bot_ids), WidgetMessage.created_at >= m_ago)
+            .scalar() or 0
+        ) if bot_ids else 0
+
+        # storage: sum of FAISS index sizes (approximate)
+        storage_gb = 0.0
+        try:
+            indexes = get_all_indexes(bot_ids)
+            storage_gb = sum(idx.get("size_mb", 0) for idx in indexes) / 1024
+        except Exception:
+            pass
+
+        overall_pct = max(
+            msgs_used / quotas["messages"] * 100 if quotas["messages"] else 0,
+            storage_gb / quotas["storage_gb"] * 100 if quotas["storage_gb"] else 0,
+        )
+
+        top_clients.append({
+            "id":               u.id,
+            "name":             u.full_name or u.email.split("@")[0],
+            "email":            u.email,
+            "plan":             plan,
+            "messages_used":    msgs_used,
+            "messages_quota":   quotas["messages"],
+            "storage_used_gb":  round(storage_gb, 2),
+            "storage_quota_gb": quotas["storage_gb"],
+            "mrr":              PLAN_MRR.get(plan, 0),
+            "usage_pct":        round(overall_pct, 1),
         })
 
-    # Active sessions (last 24h)
-    active_sessions = db.query(ChatSessionModel).filter(
-        ChatSessionModel.updated_at >= datetime.utcnow() - timedelta(hours=24)
-    ).count()
+    top_clients.sort(key=lambda c: -c["mrr"])
+    top_clients = top_clients[:5]
 
-    return {
-        "total_users": total_users,
-        "total_sessions": total_sessions,
-        "total_messages": total_messages,
-        "total_documents": total_documents,
-        "active_sessions_24h": active_sessions,
-        "messages_per_day": messages_per_day,
-        "total_bots": total_bots,
-    }
-
-
-# ── System Health ─────────────────────────────────────────────────────────────
-
-@router.get("/system")
-def get_system_health(current_user: UserModel = Depends(get_admin_user)):
-    vector_store_path = os.path.join(os.getcwd(), "vector_store")
-    
-    # Count FAISS indexes and total size
-    total_indexes = 0
-    total_size_mb = 0.0
-    user_breakdown = []
-
-    if os.path.exists(vector_store_path):
-        for user_dir in os.listdir(vector_store_path):
-            user_path = os.path.join(vector_store_path, user_dir)
-            if not os.path.isdir(user_path):
-                continue
-            user_indexes = 0
-            user_size = 0.0
-            for session_dir in os.listdir(user_path):
-                session_path = os.path.join(user_path, session_dir)
-                if os.path.exists(os.path.join(session_path, "index.faiss")):
-                    user_indexes += 1
-                    for f in os.listdir(session_path):
-                        fpath = os.path.join(session_path, f)
-                        user_size += os.path.getsize(fpath) / (1024 * 1024)
-            total_indexes += user_indexes
-            total_size_mb += user_size
-            user_breakdown.append({
-                "user": user_dir,
-                "indexes": user_indexes,
-                "size_mb": round(user_size, 2)
-            })
-
-    # Upload folder size
-    upload_path = os.path.join(os.getcwd(), "uploads")
-    upload_size_mb = 0.0
-    upload_count = 0
-    if os.path.exists(upload_path):
-        for f in os.listdir(upload_path):
-            fpath = os.path.join(upload_path, f)
-            if os.path.isfile(fpath):
-                upload_size_mb += os.path.getsize(fpath) / (1024 * 1024)
-                upload_count += 1
-
-    return {
-        "faiss": {
-            "total_indexes": total_indexes,
-            "total_size_mb": round(total_size_mb, 2),
-            "user_breakdown": user_breakdown,
-        },
-        "uploads": {
-            "file_count": upload_count,
-            "size_mb": round(upload_size_mb, 2),
+    # activity feed — last 10 messages across all bots
+    recent_msgs = (
+        db.query(WidgetMessage, WidgetBot.name)
+        .join(WidgetBot, WidgetBot.id == WidgetMessage.bot_id)
+        .filter(WidgetMessage.role == "user")
+        .order_by(desc(WidgetMessage.created_at))
+        .limit(10)
+        .all()
+    )
+    activity_feed = [
+        {
+            "bot_name":   bot_name,
+            "message":    msg.content[:120],
+            "created_at": msg.created_at.isoformat(),
         }
+        for msg, bot_name in recent_msgs
+    ]
+
+    return {
+        "total_users":          total_users,
+        "new_users_this_month": new_users_this_month,
+        "total_bots":           total_bots,
+        "active_bots":          active_bots,
+        "total_messages":       total_messages,
+        "messages_this_month":  messages_this_month,
+        "mrr":                  mrr,
+        "arr":                  arr,
+        "revenue_this_month":   revenue_this_month,
+        "revenue_last_month":   revenue_last_month,
+        "revenue_change_pct":   round(revenue_change_pct, 1),
+        "plan_breakdown":       plan_breakdown,
+        "top_clients":          top_clients,
+        "activity_feed":        activity_feed,
     }
 
 
-@router.get("/billing")
-def get_billing(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
-    users = db.query(UserModel).all()
-    results = []
-    for user in users:
-        bots = db.query(WidgetBot).filter_by(owner_id=user.id).all()
-        bot_ids = [bot.id for bot in bots]
-        messages_count = messages_collection.count_documents({"bot_id": {"$in": bot_ids}}) if bot_ids else 0
-        docs_count = documents_collection.count_documents({"user_id": {"$in": bot_ids}}) if bot_ids else 0
-        sessions_count = len(messages_collection.distinct("session_id", {"bot_id": {"$in": bot_ids}})) if bot_ids else 0
-        plan_tier = "Starter"
-        if messages_count > 5000 or docs_count > 50:
-            plan_tier = "Growth"
-        if messages_count > 20000 or docs_count > 200:
-            plan_tier = "Enterprise"
+# ── /admin/clients ────────────────────────────────────────────────────────────
 
-        results.append({
-            "email": user.email,
-            "messages_count": messages_count,
-            "docs_count": docs_count,
-            "sessions_count": sessions_count,
-            "storage_mb": 0.0,
-            "plan_tier": plan_tier,
+@router.get("/clients")
+def admin_clients(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    now   = datetime.utcnow()
+    m_ago = now - timedelta(days=30)
+    users = db.query(UserModel).order_by(desc(UserModel.created_at)).all()
+
+    clients = []
+    for u in users:
+        sub    = db.query(Subscription).filter_by(owner_id=u.id, status="active").first()
+        plan   = sub.plan.lower() if sub else "free"
+        quotas = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
+
+        bots    = db.query(WidgetBot).filter_by(owner_id=u.id).all()
+        bot_ids = [b.id for b in bots]
+
+        msgs_used = (
+            db.query(func.count(WidgetMessage.id))
+            .filter(WidgetMessage.bot_id.in_(bot_ids), WidgetMessage.created_at >= m_ago)
+            .scalar() or 0
+        ) if bot_ids else 0
+
+        docs_indexed = sum(b.docs_indexed or 0 for b in bots)
+
+        storage_gb = 0.0
+        try:
+            indexes = get_all_indexes(bot_ids)
+            storage_gb = sum(idx.get("size_mb", 0) for idx in indexes) / 1024
+        except Exception:
+            pass
+
+        breakdown = _quota_breakdown(
+            msgs_used,        quotas["messages"],
+            docs_indexed,     quotas["docs"],
+            storage_gb,       quotas["storage_gb"],
+        )
+
+        renewal = (sub.created_at + timedelta(days=30)).isoformat() if sub else None
+
+        clients.append({
+            "id":               u.id,
+            "name":             u.full_name or u.email.split("@")[0],
+            "email":            u.email,
+            "plan":             plan,
+            "messages_used":    msgs_used,
+            "messages_quota":   quotas["messages"],
+            "docs_indexed":     docs_indexed,
+            "docs_quota":       quotas["docs"],
+            "storage_used_gb":  round(storage_gb, 2),
+            "storage_quota_gb": quotas["storage_gb"],
+            "mrr":              PLAN_MRR.get(plan, 0),
+            "renewal_date":     renewal,
+            "quota_breakdown":  breakdown,
         })
-    return {"clients": results}
 
+    return {"clients": clients}
+
+
+@router.patch("/clients/{client_id}/plan")
+def update_client_plan(
+    client_id: str,
+    body: dict,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    sub = db.query(Subscription).filter_by(owner_id=client_id, status="active").first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    new_plan = body.get("plan", "").lower()
+    if new_plan not in PLAN_MRR:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {new_plan}")
+    sub.plan = new_plan
+    db.commit()
+    return {"ok": True, "plan": new_plan}
+
+
+# ── /admin/bots ───────────────────────────────────────────────────────────────
 
 @router.get("/bots")
-def get_all_bots(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
-    bots = db.query(WidgetBot).filter_by(is_active=True).all()
-    bot_stats = []
-    for bot in bots:
-        doc_count = documents_collection.count_documents({"user_id": bot.id})
-        message_count = messages_collection.count_documents({"bot_id": bot.id})
-        owner = db.query(UserModel).filter_by(id=bot.owner_id).first()
-        bot_stats.append({
-            "id": bot.id,
-            "name": bot.name,
-            "status": "active" if bot.is_active else "inactive",
-            "doc_count": doc_count,
-            "message_count": message_count,
-            "allowed_origin": bot.allowed_origin,
-            "created_at": bot.created_at.isoformat() if bot.created_at else None,
-            "owner": {
-                "id": owner.id if owner else None,
-                "name": owner.name if owner else "Unknown",
-                "email": owner.email if owner else "Unknown",
-            } if owner else None,
-        })
-    return {"bots": bot_stats}
-
-
-@router.get("/feedback")
-def get_feedback_summary(current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
-    feedback_col = documents_collection.database["widget_feedback"] if hasattr(documents_collection, 'database') else None
-    if feedback_col is None:
-        return {"feedback": []}
-
-    # Get all feedback entries with full details
-    all_feedback = list(feedback_col.find({}, {"_id": 0}).sort("created_at", -1))
-
-    # Group by bot_id for summary
-    bot_feedback = {}
-    for item in all_feedback:
-        bot_id = item.get("bot_id")
-        if not bot_id:
-            continue
-        if bot_id not in bot_feedback:
-            bot_feedback[bot_id] = {
-                "bot_id": bot_id,
-                "bot_name": "Unknown",
-                "ratings": [],
-                "total_feedback": 0,
-                "feedback_list": []
-            }
-        bot_feedback[bot_id]["ratings"].append(item.get("rating", 0))
-        bot_feedback[bot_id]["total_feedback"] += 1
-        bot_feedback[bot_id]["feedback_list"].append(item)
-
+def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    bots = db.query(WidgetBot).order_by(desc(WidgetBot.created_at)).all()
     result = []
-    for bot_id, entry in bot_feedback.items():
-        bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+    for bot in bots:
+        owner = db.query(UserModel).filter_by(id=bot.owner_id).first()
+
+        total_msgs = db.query(func.count(WidgetMessage.id)).filter_by(bot_id=bot.id).scalar() or 0
+
+        # success rate: messages marked as answered
+        answered = (
+            db.query(func.count(WidgetMessage.id))
+            .filter_by(bot_id=bot.id, is_answered=True)
+            .scalar() or 0
+        )
+        success_rate = round(answered / total_msgs * 100, 1) if total_msgs > 0 else 0
+
+        # average response time in ms
+        avg_rt_row = (
+            db.query(func.avg(WidgetMessage.response_time_ms))
+            .filter(WidgetMessage.bot_id == bot.id, WidgetMessage.response_time_ms != None)
+            .scalar()
+        )
+        avg_response_ms = round(avg_rt_row or 0)
+
         result.append({
-            "bot_id": bot_id,
-            "bot_name": bot.name if bot else entry["bot_name"],
-            "avg_score": round(sum(entry["ratings"]) / len(entry["ratings"]), 2) if entry["ratings"] else 0.0,
-            "total_feedback": entry["total_feedback"],
-            "feedback_list": entry["feedback_list"]
+            "id":              bot.id,
+            "name":            bot.name,
+            "owner_email":     owner.email if owner else "—",
+            "total_messages":  total_msgs,
+            "success_rate":    success_rate,
+            "avg_response_ms": avg_response_ms,
+            "docs_indexed":    bot.docs_indexed or 0,
+            "created_at":      bot.created_at.isoformat(),
         })
-    return {"feedback": result}
+
+    return {"bots": result}
 
 
-@router.delete("/feedback/{bot_id}")
-def delete_feedback(bot_id: str, current_user: UserModel = Depends(get_admin_user), db: Session = Depends(get_db)):
-    feedback_col = documents_collection.database["widget_feedback"] if hasattr(documents_collection, 'database') else None
-    if feedback_col is None:
-        raise HTTPException(status_code=404, detail="Feedback collection not found")
-    
-    result = feedback_col.delete_many({"bot_id": bot_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="No feedback found for this bot")
-    
-    return {"message": f"Deleted {result.deleted_count} feedback entries"}
+# ── /admin/system ─────────────────────────────────────────────────────────────
 
+@router.get("/system")
+def admin_system(admin=Depends(require_admin)):
+    # MongoDB collection stats
+    mongo_collections = []
+    try:
+        db_stats = mongodb.command("dbstats")
+        for col_name in mongodb.list_collection_names():
+            col_stats = mongodb.command("collstats", col_name)
+            mongo_collections.append({
+                "name":    col_name,
+                "size_mb": round(col_stats.get("size", 0) / 1024 / 1024, 2),
+                "count":   col_stats.get("count", 0),
+            })
+    except Exception:
+        mongo_collections = []
 
-@router.post("/bots/{bot_id}/preview-key")
-def create_preview_key(
-    bot_id: str,
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    bot = db.query(WidgetBot).filter_by(id=bot_id, is_active=True).first()
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
+    # FAISS indexes
+    faiss_indexes = []
+    try:
+        faiss_indexes = get_all_indexes()  # returns list of {bot_id, vectors, size_mb}
+    except Exception:
+        pass
 
-    raw_key, key_hash = generate_api_key()
-    api_key = WidgetApiKey(
-        id=str(uuid.uuid4()),
-        bot_id=bot_id,
-        key_hash=key_hash,
-        key_prefix=raw_key[:10],
-        is_active=True,
-    )
-    db.add(api_key)
-    db.commit()
+    # System resources
+    cpu_pct = psutil.cpu_percent(interval=0.5)
+    ram     = psutil.virtual_memory()
+    disk    = psutil.disk_usage("/")
 
     return {
-        "key": raw_key,
-        "prefix": raw_key[:10],
-        "is_active": True,
-        "created_at": api_key.created_at,
-    }
+        "mongo_collections": mongo_collections,
+        "faiss_indexes":     faiss_indexes,
+        "cpu_pct":           round(cpu_pct, 1),
+        "ram_pct":           round(ram.percent, 1),
+        "disk_pct":          round(disk.percent, 1),
+        "uploads": {
+            "file_count": 0
+        }    }
 
-@router.delete("/bots/{bot_id}")
-def delete_bot(
-    bot_id: str,
-    current_user: UserModel = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    bot = db.query(WidgetBot).filter_by(id=bot_id).first()
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    bot.is_active = False
-    db.commit()
-    return {"ok": True}
+
+# ── /admin/feedback ───────────────────────────────────────────────────────────
+
+@router.get("/feedback")
+def admin_feedback(admin=Depends(require_admin), db: Session = Depends(get_db)):
+    rows = (
+        db.query(WidgetFeedback, WidgetBot.name)
+        .join(WidgetBot, WidgetBot.id == WidgetFeedback.bot_id)
+        .order_by(desc(WidgetFeedback.created_at))
+        .limit(200)
+        .all()
+    )
+    feedback = [
+        {
+            "id":         f.id,
+            "bot_name":   bot_name,
+            "rating":     f.rating,
+            "comment":    f.comment,
+            "category":   f.category,
+            "user_name":  f.user_name,
+            "created_at": f.created_at.isoformat(),
+        }
+        for f, bot_name in rows
+    ]
+    avg_score = (
+        db.query(func.avg(WidgetFeedback.rating)).scalar() or 0
+    )
+    return {"feedback": feedback, "avg_score": round(float(avg_score), 2)}

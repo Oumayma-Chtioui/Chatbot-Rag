@@ -9,8 +9,9 @@ import AdminBilling from "./AdminBilling";
 import AdminSystem from "./AdminSystem";
 import AdminTestBot from "./AdminTestBot";
 import * as api from "./api";
+import { getAdminOverview, AdminOverviewData } from "./Adminapi";
 import { useTheme } from "./UseTheme";
-const API = "http://localhost:8000";
+
 const adminToken = () => localStorage.getItem("admin_token");
 
 const tabItems = [
@@ -27,21 +28,28 @@ interface BotRow { id: string; name: string; status: string; doc_count: number; 
 interface FeedbackRow { bot_id: string; bot_name: string; avg_score: number; total_feedback: number; }
 
 export default function AdminApp() {
+  const [theme, toggleTheme] = useTheme();
+
   const [authenticated, setAuthenticated] = useState(!!adminToken());
   const [adminName, setAdminName] = useState<string>(() => {
     try { return JSON.parse(localStorage.getItem("admin_user") || "null")?.name || ""; } catch { return ""; }
   });
-  const [tab, setTab] = useState<typeof tabItems[number]["key"]>("overview");
-  const [stats, setStats] = useState<any>(null);
-  const [bots, setBots] = useState<BotRow[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
+  const VALID_TABS = ["overview", "chatbots", "feedback", "billing", "system", "testbot"];
+
+  const [tab, setTab] = useState<typeof tabItems[number]["key"]>(() => {
+    const saved = localStorage.getItem("admin_tab");
+    return (VALID_TABS.includes(saved!) ? saved : "overview") as typeof tabItems[number]["key"];
+  });
+  const [stats, setStats]       = useState<AdminOverviewData | null>(null);
+  const [bots, setBots]         = useState<BotRow[]>([]);
+  const [users, setUsers]       = useState<any[]>([]);
   const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
-  const [billing, setBilling] = useState<BillingRow[]>([]);
-  const [system, setSystem] = useState<any>(null);
-  const [selectedBot, setSelectedBot] = useState<string>("");
+  const [billing, setBilling]   = useState<BillingRow[]>([]);
+  const [system, setSystem]     = useState<any>(null);
+  const [selectedBot, setSelectedBot]       = useState<string>("");
   const [selectedChatbot, setSelectedChatbot] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -49,7 +57,6 @@ export default function AdminApp() {
     loadTab(tab);
   }, [authenticated, tab]);
 
-  // Close sidebar on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSidebarOpen(false); };
     window.addEventListener("keydown", onKey);
@@ -58,24 +65,30 @@ export default function AdminApp() {
 
   const navigate = (t: typeof tabItems[number]["key"]) => {
     setTab(t);
+    localStorage.setItem("admin_tab", t);
     setSidebarOpen(false);
   };
 
   const handleLogin = (name: string) => {
     setAdminName(name);
     setAuthenticated(true);
-    setTab("overview");
+    // Tab is already "overview" but useEffect won't re-fire since authenticated
+    // didn't change yet — so manually trigger load after state settles
+    setTimeout(() => loadTab("overview"), 0);
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("admin_tab");
     localStorage.removeItem("admin_token");
     localStorage.removeItem("admin_user");
     setAuthenticated(false);
     setAdminName("");
+    setStats(null);
   };
 
   const fetchWithAuth = async (url: string) => {
     const token = adminToken();
+    const API = "http://localhost:8000";
     const res = await fetch(`${API}${url}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -88,18 +101,14 @@ export default function AdminApp() {
     try {
       await fetchWithAuth(`/admin/users/${userId}`);
       setUsers(users.filter((u) => u.id !== userId));
-    } catch (err: any) {
-      setError(err.message);
-    }
+    } catch (err: any) { setError(err.message); }
   };
 
   const handleDeleteBot = async (botId: string) => {
     try {
       await api.deleteBot(botId);
       setBots(bots.filter((b) => b.id !== botId));
-    } catch (err: any) {
-      setError(err.message);
-    }
+    } catch (err: any) { setError(err.message); }
   };
 
   const loadTab = async (activeTab: typeof tabItems[number]["key"]) => {
@@ -107,7 +116,8 @@ export default function AdminApp() {
     setLoading(true);
     try {
       if (activeTab === "overview") {
-        setStats(await api.getAdminStats());
+        // Use Adminapi.ts which calls /admin/overview (the rich endpoint)
+        setStats(await getAdminOverview());
       }
       if (activeTab === "chatbots" || activeTab === "testbot") {
         const data = await api.getAdminBots();
@@ -135,26 +145,16 @@ export default function AdminApp() {
   if (!authenticated) {
     return <AdminLogin onLogin={handleLogin} />;
   }
-
   const tabLabelMap: Record<string, string> = {
-    overview: "Overview",
-    chatbots: "Chatbots",
-    feedback: "Feedback",
-    billing:  "Billing",
-    system:   "System",
-    testbot:  "Test Bot",
+    overview: "Overview", chatbots: "Chatbots", feedback: "Feedback",
+    billing: "Billing",   system: "System",      testbot: "Test Bot",
   };
 
-  const [theme, toggleTheme] = useTheme()
 
   return (
     <div className="admin-layout">
-      {/* Overlay */}
-      <div
-        className={`admin-sidebar-overlay${sidebarOpen ? " open" : ""}`}
-        onClick={() => setSidebarOpen(false)}
-        aria-hidden="true"
-      />
+      <div className={`admin-sidebar-overlay${sidebarOpen ? " open" : ""}`}
+        onClick={() => setSidebarOpen(false)} aria-hidden="true" />
 
       <aside className={`admin-sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="cl-brand">
@@ -163,11 +163,9 @@ export default function AdminApp() {
         </div>
         <nav className="cl-nav">
           {tabItems.map((item) => (
-            <button
-              key={item.key}
+            <button key={item.key}
               className={`cl-nav-item${tab === item.key ? " active" : ""}`}
-              onClick={() => navigate(item.key)}
-            >
+              onClick={() => navigate(item.key)}>
               <span className="cl-nav-icon">{item.icon}</span>
               {item.label}
             </button>
@@ -181,27 +179,17 @@ export default function AdminApp() {
               <div className="cl-user-role">Administrator</div>
             </div>
           </div>
-          <button
-              className="cl-theme-toggle"
-              onClick={toggleTheme}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            >
-              {theme === "dark" ? "☀️" : "🌙"}
-            </button>
+          <button className="cl-theme-toggle" onClick={toggleTheme}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
           <button className="cl-logout" onClick={handleLogout}>Sign out</button>
         </div>
       </aside>
 
       <main className="cl-main">
-        {/* Mobile topbar */}
         <div className="cl-mobile-topbar">
-          <button
-            className="cl-hamburger"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle navigation"
-          >
-            ☰
-          </button>
+          <button className="cl-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Toggle navigation">☰</button>
           <span className="cl-mobile-title">Admin Console</span>
         </div>
 
@@ -219,9 +207,9 @@ export default function AdminApp() {
             : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={setSelectedChatbot} />
           )}
           {tab === "feedback" && <AdminFeedback feedback={feedback} loading={loading} />}
-          {tab === "billing"  && <AdminBilling billing={billing} loading={loading} />}
-          {tab === "system"   && <AdminSystem system={system} loading={loading} />}
-          {tab === "testbot"  && <AdminTestBot bots={bots} selectedBot={selectedBot} onBotSelect={setSelectedBot} loading={loading} />}
+          {tab === "billing"  && <AdminBilling  billing={billing}   loading={loading} />}
+          {tab === "system"   && <AdminSystem   system={system}     loading={loading} />}
+          {tab === "testbot"  && <AdminTestBot  bots={bots} selectedBot={selectedBot} onBotSelect={setSelectedBot} loading={loading} />}
         </div>
       </main>
     </div>
