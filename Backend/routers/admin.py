@@ -13,6 +13,8 @@ Endpoints:
   GET /admin/feedback   – all feedback across all bots
 """
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -22,7 +24,7 @@ import psutil
 
 from database import get_db, mongodb
 from models.user import UserModel, ChatSessionModel
-from models.widget import WidgetBot, WidgetMessage, WidgetFeedback
+from models.widget import WidgetApiKey, WidgetBot, WidgetMessage, WidgetFeedback
 from models.billing import Subscription        # adjust to your billing model
 from auth.helpers import get_current_user
 from services.faiss_service import get_all_indexes  # adjust as needed
@@ -293,37 +295,66 @@ def update_client_plan(
 @router.get("/bots")
 def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
     bots = db.query(WidgetBot).order_by(desc(WidgetBot.created_at)).all()
+
+    # Pre-fetch all MongoDB message counts in one go to avoid per-bot round-trips
+    messages_col = mongodb["widget_messages"]
+    bot_ids_all  = [b.id for b in bots]
+    mongo_counts: dict = {}
+    try:
+        pipeline = [
+            {"$match": {"bot_id": {"$in": bot_ids_all}}},
+            {"$group": {"_id": "$bot_id", "count": {"$sum": 1}}},
+        ]
+        for row in messages_col.aggregate(pipeline):
+            mongo_counts[row["_id"]] = row["count"]
+    except Exception:
+        pass  # fall back to 0 per bot
+
     result = []
     for bot in bots:
         owner = db.query(UserModel).filter_by(id=bot.owner_id).first()
 
-        total_msgs = db.query(func.count(WidgetMessage.id)).filter_by(bot_id=bot.id).scalar() or 0
+        # Messages are stored in MongoDB — SQL WidgetMessage table is empty/unused
+        total_msgs = mongo_counts.get(bot.id, 0)
 
-        # success rate: messages marked as answered
-        answered = (
-            db.query(func.count(WidgetMessage.id))
-            .filter_by(bot_id=bot.id, is_answered=True)
-            .scalar() or 0
-        )
-        success_rate = round(answered / total_msgs * 100, 1) if total_msgs > 0 else 0
+        # Success / failure rates from MongoDB answered flag
+        success_rate = 0
+        avg_response_ms = 0
+        try:
+            answered = messages_col.count_documents({"bot_id": bot.id, "answered": True})
+            success_rate = round(answered / total_msgs * 100, 1) if total_msgs > 0 else 0
 
-        # average response time in ms
-        avg_rt_row = (
-            db.query(func.avg(WidgetMessage.response_time_ms))
-            .filter(WidgetMessage.bot_id == bot.id, WidgetMessage.response_time_ms != None)
-            .scalar()
-        )
-        avg_response_ms = round(avg_rt_row or 0)
+            rt_pipeline = [
+                {"$match": {"bot_id": bot.id, "response_time_ms": {"$ne": None, "$exists": True}}},
+                {"$group": {"_id": None, "avg": {"$avg": "$response_time_ms"}}},
+            ]
+            rt_rows = list(messages_col.aggregate(rt_pipeline))
+            avg_response_ms = round(rt_rows[0]["avg"]) if rt_rows else 0
+        except Exception:
+            pass
+
+        # Resolve owner name — UserModel may use full_name or name depending on migration
+        owner_name  = (getattr(owner, "full_name", None) or getattr(owner, "name", None) or "") if owner else ""
+        owner_email = owner.email if owner else ""
 
         result.append({
             "id":              bot.id,
             "name":            bot.name,
-            "owner_email":     owner.email if owner else "—",
+            "owner_id":        bot.owner_id,
+            "owner_email":     owner_email or "—",
+            "owner": {
+                "name":  owner_name  or "—",
+                "email": owner_email or "—",
+            },
+            "allowed_origin":  bot.allowed_origin,
+            "is_active":       bot.is_active,
             "total_messages":  total_msgs,
+            "message_count":   total_msgs,
             "success_rate":    success_rate,
             "avg_response_ms": avg_response_ms,
             "docs_indexed":    bot.docs_indexed or 0,
-            "created_at":      bot.created_at.isoformat(),
+            "doc_count":       bot.docs_indexed or 0,
+            "created_at":      bot.created_at.isoformat() if bot.created_at else None,
         })
 
     return {"bots": result}
@@ -577,7 +608,7 @@ def admin_billing(admin=Depends(require_admin), db: Session = Depends(get_db)):
             pass
  
         clients.append({
-            "name":           u.name or u.email.split("@")[0],
+            "name": (getattr(u, "full_name", None) or getattr(u, "name", None) or u.email.split("@")[0]),
             "email":          u.email,
             "plan_tier":      plan,
             "mrr":            PLAN_MRR.get(plan, 0),
@@ -595,30 +626,93 @@ def admin_billing(admin=Depends(require_admin), db: Session = Depends(get_db)):
 @router.get("/users")
 def get_users(admin=Depends(require_admin), db: Session = Depends(get_db)):
     users = db.query(UserModel).order_by(UserModel.created_at.desc()).all()
+
+    # Pre-fetch MongoDB message counts for all bots in one aggregation
+    messages_col = mongodb["widget_messages"]
+    all_bot_ids  = [
+        b.id for b in db.query(WidgetBot).filter_by(is_active=True).all()
+    ]
+    mongo_msg_counts: dict = {}
+    try:
+        pipeline = [
+            {"$match": {"bot_id": {"$in": all_bot_ids}}},
+            {"$group": {"_id": "$bot_id", "count": {"$sum": 1}}},
+        ]
+        for row in messages_col.aggregate(pipeline):
+            mongo_msg_counts[row["_id"]] = row["count"]
+    except Exception:
+        pass
+
     result = []
     for u in users:
-        # get their bot if exists
         bot = db.query(WidgetBot).filter_by(owner_id=u.id, is_active=True).first()
-        
+
         session_count = db.query(func.count(ChatSessionModel.id)).filter_by(
             user_id=u.id
         ).scalar() or 0
 
+        # Resolve name — support both full_name and name column names
+        display_name = (
+            getattr(u, "full_name", None) or getattr(u, "name", None) or ""
+        )
+
         result.append({
-            "id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "is_admin": u.is_admin,
+            "id":         u.id,
+            "name":       display_name,
+            "email":      u.email,
+            "is_admin":   u.is_admin,
             "is_verified": u.is_verified,
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "session_count": session_count,
             "bot": {
-                "id": bot.id,
-                "name": bot.name,
-                "doc_count": bot.docs_indexed or 0,
-                "message_count": db.query(func.count(WidgetMessage.id)).filter_by(
-                    bot_id=bot.id
-                ).scalar() or 0
-            } if bot else None
+                "id":            bot.id,
+                "name":          bot.name,
+                "doc_count":     bot.docs_indexed or 0,
+                # Messages live in MongoDB, not in SQL WidgetMessage table
+                "message_count": mongo_msg_counts.get(bot.id, 0),
+            } if bot else None,
         })
     return result
+
+# Preview key
+@router.post("/bots/{bot_id}/preview-key")
+def create_preview_key(
+    bot_id: str,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    from auth.widget_auth import generate_api_key
+    bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    raw_key, key_hash = generate_api_key()
+    api_key = WidgetApiKey(
+        id=str(uuid.uuid4()),
+        bot_id=bot_id,
+        key_hash=key_hash,
+        key_prefix=raw_key[:10],
+    )
+    db.add(api_key)
+    db.commit()
+    return {"key": raw_key}
+
+# REPLACE the entire get_bot_analytics_admin function with this:
+@router.get("/bots/{bot_id}/analytics")
+def get_bot_analytics_admin(
+    bot_id: str,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    from services.analytics_service import get_bot_analytics
+    return get_bot_analytics(bot_id, db)
+
+@router.get("/documents")
+def get_all_documents(admin=Depends(require_admin)):
+    from database import documents_collection
+    docs = list(documents_collection.find({}, {"_id": 0}).limit(500))
+    return {"documents": docs}

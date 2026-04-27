@@ -18,6 +18,28 @@ def is_cancelled(doc_id):
 # Detect URL function
 import re
 
+# Cache Embedding model
+_embeddings = None
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+    logger.info("Embeddings model loaded and cached")
+    return _embeddings
+
+# Cache loaded indexes
+_faiss_cache: dict = {}
+
+def load_faiss_cached(path, embeddings):
+    if path not in _faiss_cache:
+        _faiss_cache[path] = FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
+    logger.info(f"FAISS index loaded and cached from {path}")
+    return _faiss_cache[path]
+
 def is_url(input_str: str) -> bool:
     return "." in input_str and " " not in input_str
 
@@ -132,7 +154,7 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
         # ✅ Load existing index if it exists, otherwise start fresh
         if os.path.exists(faiss_index_path):
             logger.info(f"📂 Loading existing index to merge into")
-            db = FAISS.load_local(VECTOR_PATH, embeddings, allow_dangerous_deserialization=True)
+            db = load_faiss_cached(VECTOR_PATH, embeddings)
         else:
             db = None
 
@@ -194,17 +216,9 @@ def get_vector_store(user_id: int, session_id: str):
     
     try:
         logger.info(f"📂 Loading vector store from {VECTOR_PATH}")
-        embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        embeddings = get_embeddings()
         
-        db = FAISS.load_local(
-            VECTOR_PATH, 
-            embeddings, 
-            allow_dangerous_deserialization=True
-        )
+        db = load_faiss_cached(VECTOR_PATH, embeddings)
         
         logger.info(f"✅ Vector store loaded successfully")
         return db

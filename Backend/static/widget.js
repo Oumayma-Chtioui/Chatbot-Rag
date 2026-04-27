@@ -14,7 +14,7 @@
   let sessionId = sessionStorage.getItem("nm_session") || null;
   let isOpen    = false;
 
-  /* ── Shadow DOM host ─────────────────────────────────────────────────────── */
+  /* ── Shadow DOM host ── */
   const shadow = (() => {
     const host = document.createElement("div");
     host.id = "novamind-widget-host";
@@ -22,219 +22,38 @@
     return host.attachShadow({ mode: "open" });
   })();
 
-  const side   = POSITION.includes("right") ? "right: 24px;" : "left: 24px;";
-  const vside  = POSITION.includes("bottom") ? "bottom:" : "top:";
+  /* ── Load marked.js for markdown rendering ── */
+  let markedReady = false;
+  const markedScript = document.createElement("script");
+  markedScript.src = "https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js";
+  markedScript.onload = () => { markedReady = true; };
+  document.head.appendChild(markedScript);
 
-  shadow.innerHTML = `
-    <style>
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      :host { font-family: system-ui, sans-serif; font-size: 14px; }
+  /* ── Inject CSS via fetch into shadow DOM ── */
+  fetch(`${API_BASE}/static/widget.css`)
+    .then(res => res.text())
+    .then(cssText => {
+      const accentOverride = `
+        :host { --accent: ${ACCENT}; }
+      `;
+      const style = document.createElement("style");
+      style.textContent = accentOverride + cssText;
+      shadow.appendChild(style);
+    });
 
-      /* ── Bubble ── */
-      #nm-bubble {
-        position: fixed;
-        ${side}
-        ${vside} 24px;
-        width: 52px; height: 52px;
-        border-radius: 50%;
-        background: ${ACCENT};
-        cursor: pointer;
-        display: flex; align-items: center; justify-content: center;
-        border: none; outline: none;
-        z-index: 2147483646;
-        transition: transform 0.15s, box-shadow 0.15s;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.18);
-      }
-      #nm-bubble:hover { transform: scale(1.08); }
-      #nm-bubble svg { width: 24px; height: 24px; fill: #fff; }
+  /* ── HTML template (no style block needed) ── */
+  const side  = POSITION.includes("right") ? "right: 24px;" : "left: 24px;";
+  const vside = POSITION.includes("bottom") ? "bottom:" : "top:";
 
-      /* ── Panel ── */
-      #nm-panel {
-        position: fixed;
-        ${side}
-        ${vside} 88px;
-        width: 360px;
-        height: 520px;
-        background: #fff;
-        border-radius: 16px;
-        border: 1px solid #e5e5e3;
-        display: none;               /* hidden by default */
-        flex-direction: column;
-        overflow: hidden;
-        z-index: 2147483647;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.14);
-        animation: nm-slide-in 0.2s ease;
-      }
-      #nm-panel.nm-open { display: flex; }
-
-      @keyframes nm-slide-in {
-        from { opacity: 0; transform: translateY(12px); }
-        to   { opacity: 1; transform: translateY(0);    }
-      }
-
-      /* ── Header ── */
-      #nm-header {
-        background: ${ACCENT};
-        color: #fff;
-        padding: 14px 16px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-shrink: 0;
-      }
-      #nm-header span { font-weight: 600; font-size: 14px; }
-      #nm-close {
-        background: none; border: none; color: #fff;
-        cursor: pointer; font-size: 18px; line-height: 1;
-        opacity: 0.8; padding: 0 2px;
-      }
-      #nm-close:hover { opacity: 1; }
-
-      /* ── Messages ── */
-      #nm-messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        background: #fafaf8;
-      }
-      #nm-messages::-webkit-scrollbar { width: 4px; }
-      #nm-messages::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
-
-      .nm-msg {
-        max-width: 82%;
-        padding: 9px 13px;
-        border-radius: 12px;
-        font-size: 13px;
-        line-height: 1.5;
-        word-break: break-word;
-      }
-      .nm-msg.nm-user {
-        align-self: flex-end;
-        background: ${ACCENT};
-        color: #fff;
-        border-bottom-right-radius: 3px;
-      }
-      .nm-msg.nm-bot {
-        align-self: flex-start;
-        background: #fff;
-        border: 1px solid #e5e5e3;
-        color: #111;
-        border-bottom-left-radius: 3px;
-      }
-      .nm-msg.nm-typing {
-        align-self: flex-start;
-        background: #fff;
-        border: 1px solid #e5e5e3;
-        color: #999;
-        font-style: italic;
-      }
-
-      /* ── Input area ── */
-      #nm-footer {
-        display: flex;
-        gap: 8px;
-        padding: 10px 12px;
-        border-top: 1px solid #e5e5e3;
-        background: #fff;
-        flex-shrink: 0;
-      }
-      #nm-input {
-        flex: 1;
-        border: 1px solid #e5e5e3;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-size: 13px;
-        font-family: inherit;
-        resize: none;
-        outline: none;
-        max-height: 100px;
-        line-height: 1.4;
-        color: #111;
-      }
-      #nm-input:focus { border-color: ${ACCENT}; }
-      #nm-send {
-        background: ${ACCENT};
-        color: #fff;
-        border: none;
-        border-radius: 8px;
-        padding: 0 14px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 600;
-        flex-shrink: 0;
-        transition: opacity 0.15s;
-      }
-      #nm-send:hover { opacity: 0.88; }
-      #nm-send:disabled { opacity: 0.5; cursor: not-allowed; }
-
-      /* ── Intervention panel ── */
-      .nm-intervention {
-        background: rgba(239,68,68,0.07);
-        border: 1px solid rgba(239,68,68,0.22);
-        border-radius: 10px;
-        padding: 12px 14px;
-        margin-top: 4px;
-        font-size: 13px;
-        line-height: 1.5;
-        color: #111;
-      }
-      .nm-intervention p { margin: 0 0 10px; }
-      .nm-intervention input {
-        width: 100%;
-        border: 1px solid #ddd;
-        border-radius: 7px;
-        padding: 7px 10px;
-        font-size: 13px;
-        font-family: inherit;
-        margin-bottom: 8px;
-        outline: none;
-        color: #111;
-      }
-      .nm-intervention input:focus { border-color: ${ACCENT}; }
-      .nm-int-btn {
-        background: ${ACCENT};
-        color: #fff;
-        border: none;
-        border-radius: 7px;
-        padding: 8px 0;
-        width: 100%;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 600;
-        transition: opacity 0.15s;
-      }
-      .nm-int-btn:hover { opacity: 0.88; }
-      .nm-int-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-      .nm-cancel {
-        display: block;
-        text-align: center;
-        margin-top: 8px;
-        font-size: 11px;
-        color: #999;
-        cursor: pointer;
-      }
-      .nm-cancel:hover { color: #555; }
-      .nm-success {
-        background: rgba(34,197,94,0.1);
-        border: 1px solid rgba(34,197,94,0.28);
-        border-radius: 8px;
-        padding: 10px 12px;
-        color: #166534;
-        font-size: 13px;
-      }
-      .nm-err { color: #dc2626; font-size: 12px; margin-top: 6px; }
-    </style>
-
-    <button id="nm-bubble">
+  const template = document.createElement("div");
+  template.innerHTML = `
+    <button id="nm-bubble" style="${side} ${vside} 24px;">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.956 9.956 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
       </svg>
     </button>
 
-    <div id="nm-panel">
+    <div id="nm-panel" style="${side} ${vside} 88px;">
       <div id="nm-header">
         <span>${BOT_NAME}</span>
         <button id="nm-close">✕</button>
@@ -247,22 +66,27 @@
     </div>
   `;
 
-  /* ── Element refs ────────────────────────────────────────────────────────── */
-  const panel   = shadow.getElementById("nm-panel");
-  const bubble  = shadow.getElementById("nm-bubble");
+  // Append nodes into shadow
+  while (template.firstChild) {
+    shadow.appendChild(template.firstChild);
+  }
+
+  /* ── Element refs ── */
+  const panel    = shadow.getElementById("nm-panel");
+  const bubble   = shadow.getElementById("nm-bubble");
   const closeBtn = shadow.getElementById("nm-close");
   const messages = shadow.getElementById("nm-messages");
-  const input   = shadow.getElementById("nm-input");
-  const sendBtn = shadow.getElementById("nm-send");
+  const input    = shadow.getElementById("nm-input");
+  const sendBtn  = shadow.getElementById("nm-send");
 
-  /* ── Toggle open/close ───────────────────────────────────────────────────── */
+  /* ── Toggle open/close ── */
   function openPanel()  { isOpen = true;  panel.classList.add("nm-open"); }
   function closePanel() { isOpen = false; panel.classList.remove("nm-open"); }
 
   bubble.addEventListener("click", () => isOpen ? closePanel() : openPanel());
   closeBtn.addEventListener("click", closePanel);
 
-  /* ── Auto-resize textarea ────────────────────────────────────────────────── */
+  /* ── Auto-resize textarea ── */
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 100) + "px";
@@ -271,17 +95,27 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
-  /* ── Message helpers ─────────────────────────────────────────────────────── */
+  /* ── Message helpers ── */
   function appendMsg(text, role) {
     const el = document.createElement("div");
     el.className = `nm-msg nm-${role}`;
-    el.textContent = text;
+
+    if (role === "bot") {
+        el.innerHTML = markedReady
+            ? marked.parse(text)
+            : text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")  // fallback
+                  .replace(/\*(.*?)\*/g, "<em>$1</em>")
+                  .replace(/\n/g, "<br>");
+    } else {
+      el.textContent = text;
+    }
+
     messages.appendChild(el);
     messages.scrollTop = messages.scrollHeight;
     return el;
   }
 
-  /* ── Intervention state ──────────────────────────────────────────────────── */
+  /* ── Intervention state ── */
   let nmIntervention = { active: false, step: "offer", ticketId: null, question: null };
 
   function showInterventionOffer(question) {
@@ -306,7 +140,6 @@
       panel.querySelector("#nm-yes").onclick = () => { nmIntervention.step = "email"; renderInterventionPanel(); };
       panel.querySelector("#nm-no").onclick  = () => { nmIntervention.active = false; panel.remove(); };
     }
-
     else if (nmIntervention.step === "email") {
       panel.innerHTML = `
         <p>Entrez votre email pour recevoir la réponse :</p>
@@ -341,7 +174,6 @@
       };
       panel.querySelector("#nm-back").onclick = () => { nmIntervention.step = "offer"; renderInterventionPanel(); };
     }
-
     else if (nmIntervention.step === "verify") {
       panel.innerHTML = `
         <p>Code envoyé à votre email. Entrez-le ci-dessous :</p>
@@ -372,7 +204,6 @@
       };
       panel.querySelector("#nm-back2").onclick = () => { nmIntervention.active = false; panel.remove(); };
     }
-
     else if (nmIntervention.step === "done") {
       panel.innerHTML = `
         <div class="nm-success">
@@ -386,7 +217,7 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
-  /* ── Send message ────────────────────────────────────────────────────────── */
+  /* ── Send message ── */
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;

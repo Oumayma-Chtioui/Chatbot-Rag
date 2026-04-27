@@ -17,6 +17,81 @@ logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).parent.parent.absolute()
 
 
+
+
+
+# ─────────────────────────────────────────────────────────────
+# Cached singletons — initialized once, reused forever
+# ─────────────────────────────────────────────────────────────
+
+_embeddings = None
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        logger.info("Loading embeddings model (first time)...")
+        _embeddings = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
+        )
+    logger.info("Embeddings model loaded and cached")
+    return _embeddings
+
+# Cache loaded indexes in memory
+_faiss_cache: dict = {}
+
+def load_faiss_cached(path, embeddings):
+    if path not in _faiss_cache:
+        _faiss_cache[path] = FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
+    logger.info(f"FAISS index loaded and cached from {path}")
+    return _faiss_cache[path]
+
+_gemini_client = None
+def load_gemini():
+    global _gemini_client
+    if _gemini_client is None:
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        _gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
+    logger.info("Gemini model loaded and cached")
+    return _gemini_client
+
+_gemini_client_2 = None
+def load_gemini_2():
+    global _gemini_client_2
+    if _gemini_client_2 is None:
+        import google.generativeai as genai
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY2"))
+        _gemini_client_2 = genai.GenerativeModel('models/gemini-2.5-flash')
+    logger.info("Gemini model 2 loaded and cached")
+    return _gemini_client_2
+
+_mistral_client = None
+def load_mistral():
+    global _mistral_client
+    if _mistral_client is None:
+        from langchain_mistralai import ChatMistralAI
+        _mistral_client = ChatMistralAI(
+            model="mistral-small-latest",
+            mistral_api_key=os.getenv("MISTRAL_API_KEY", ""),
+            temperature=0.2,
+        )
+    logger.info("Mistral model loaded and cached")
+    return _mistral_client
+
+_stepfun_client = None
+def load_openrouter_stepfun():
+    global _stepfun_client
+    if _stepfun_client is None:
+        from langchain_openai import ChatOpenAI
+        _stepfun_client = ChatOpenAI(
+            model="stepfun/step-3.5-flash:free",
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1"
+        )
+    logger.info("Stepfun model loaded and cached")
+    return _stepfun_client
+
 # ─────────────────────────────────────────────────────────────
 # Langfuse  — initialised once at module load
 # ─────────────────────────────────────────────────────────────
@@ -61,17 +136,6 @@ def get_memory_path(user_id: str, session_id: str):
     return os.path.join(os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean}_memory")
 
 
-# ─────────────────────────────────────────────────────────────
-# Embeddings (shared instance)
-# ─────────────────────────────────────────────────────────────
-
-def get_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True}
-    )
-
 
 # ─────────────────────────────────────────────────────────────
 # Conversation Vector Memory
@@ -96,7 +160,7 @@ def save_exchange_to_memory(user_id: str, session_id: str, question: str, answer
 
     try:
         if os.path.exists(faiss_index_path):
-            memory_db = FAISS.load_local(MEMORY_PATH, embeddings, allow_dangerous_deserialization=True)
+            memory_db = load_faiss_cached(MEMORY_PATH, embeddings)
             memory_db.add_documents([doc])
         else:
             memory_db = FAISS.from_documents([doc], embeddings)
@@ -115,7 +179,7 @@ def retrieve_relevant_history(user_id: str, session_id: str, question: str, k: i
 
     try:
         embeddings = get_embeddings()
-        memory_db = FAISS.load_local(MEMORY_PATH, embeddings, allow_dangerous_deserialization=True)
+        memory_db = load_faiss_cached(MEMORY_PATH, embeddings)
         results = memory_db.similarity_search(question, k=k)
         if not results:
             return ""
@@ -154,60 +218,6 @@ def save_widget_message(bot_id, session_id, question, answer, response_time_ms, 
 
 
 # ─────────────────────────────────────────────────────────────
-# LLM loaders (unchanged from original)
-# ─────────────────────────────────────────────────────────────
-
-def load_gemini():
-    import google.generativeai as genai
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    return genai.GenerativeModel('models/gemini-2.5-flash')
-
-def load_gemini_2():
-    import google.generativeai as genai
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY2"))
-    return genai.GenerativeModel('models/gemini-2.5-flash')
-
-def load_openrouter_stepfun():
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model="stepfun/step-3.5-flash:free",
-        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-        openai_api_base="https://openrouter.ai/api/v1"
-    )
-
-def load_openrouter_stepfun2():
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model="stepfun/step-3.5-flash:free",
-        openai_api_key=os.getenv("OPENROUTER_API_KEY2"),
-        openai_api_base="https://openrouter.ai/api/v1"
-    )
-
-def load_openrouter_free():
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model="openrouter/free",
-        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-        openai_api_base="https://openrouter.ai/api/v1"
-    )
-
-def load_openrouter_free_2():
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model="openrouter/free",
-        openai_api_key=os.getenv("OPENROUTER_API_KEY2"),
-        openai_api_base="https://openrouter.ai/api/v1"
-    )
-
-def load_deepseek():
-    from openai import OpenAI
-    return OpenAI(
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        base_url="https://api.deepseek.com/v1"
-    )
-
-
-# ─────────────────────────────────────────────────────────────
 # Generate Answer helpers
 # ─────────────────────────────────────────────────────────────
 
@@ -219,38 +229,13 @@ def gemini_generate_answer_2(system_prompt: str, question: str):
     llm = load_gemini_2()
     return llm.generate_content(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").text.strip()
 
-def openrouter_generate_answer(system_prompt: str, question: str):
-    llm = load_openrouter_free()
-    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
-
-def openrouter_generate_answer_2(system_prompt: str, question: str):
-    llm = load_openrouter_free_2()
-    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
-
 def openrouter_stepfun_generate_answer(system_prompt: str, question: str):
     llm = load_openrouter_stepfun()
     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
-def openrouter_stepfun_generate_answer_2(system_prompt: str, question: str):
-    llm = load_openrouter_stepfun2()
-    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
-
-def deepseek_generate_answer(system_prompt: str, question: str):
-    client = load_deepseek()
-    response = client.chat.completions.create(
-        model="deepseek/deepseek-r1",
-        messages=[{"role": "user", "content": f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"}]
-    )
-    return response.choices[0].message.content.strip()
-
 def generate_with_mistral(system_prompt: str, question: str) -> str:
-    MISTRAL_API_KEY     = os.getenv("MISTRAL_API_KEY", "")
     from langchain_mistralai import ChatMistralAI
-    llm = ChatMistralAI(
-        model="mistral-small-latest",
-        mistral_api_key=MISTRAL_API_KEY,
-        temperature=0.2,
-    )
+    llm = load_mistral()
     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
 # ─────────────────────────────────────────────────────────────
@@ -263,9 +248,6 @@ def handle_timeout(system_prompt: str, question: str):
         ("gemini-2.5-flash",           gemini_generate_answer),
         ("gemini-2.5-flash-key2",      gemini_generate_answer_2),
         ("stepfun/step-3.5-flash",     openrouter_stepfun_generate_answer),
-        ("stepfun/step-3.5-flash-k2",  openrouter_stepfun_generate_answer_2),
-        ("openrouter/free",            openrouter_generate_answer),
-        ("openrouter/free-k2",         openrouter_generate_answer_2),
     ]
     for model_name, fn in models:
         try:
@@ -337,8 +319,8 @@ def generate_answer(question: str, user_id: str, session_id: str, memory_session
         # ── 1. Retrieve ───────────────────────────────────────
         t_ret_start = time.time()
         embeddings  = get_embeddings()
-        db          = FAISS.load_local(VECTOR_PATH, embeddings, allow_dangerous_deserialization=True)
-        reformulated = reformulate_query(question)
+        reformulated = question  #no reformulation for now, as it can cause issues and latency
+        db           = load_faiss_cached(VECTOR_PATH, embeddings)
         docs_with_scores = db.similarity_search_with_score(reformulated, k=6)
         docs             = [doc for doc, score in docs_with_scores]
         retrieval_lat    = round(time.time() - t_ret_start, 3)
@@ -430,16 +412,33 @@ Document context:
                     value=total_lat,
                     comment="Total end-to-end RAG latency",
                 )
-                _langfuse.flush()
+                import threading
+
+                def _flush_langfuse():
+                    try:
+                        _langfuse.flush()
+                    except:
+                        pass
+
+                threading.Thread(target=_flush_langfuse, daemon=True).start()
                 logger.info(f"[langfuse] ✅ Flushed trace_id={trace_id}")
             except Exception as e:
                 logger.error(f"[langfuse] ❌ Tracing failed: {e}")
                 import traceback as _tb; logger.error(_tb.format_exc())
 
-        # ── 6. Save ───────────────────────────────────────────
-        save_exchange_to_memory(user_id, session_id, question, answer)
-        save_message(session_id, user_id, "user", question)
-        save_message(session_id, user_id, "assistant", answer)
+        # ── 6. Save (non-blocking) ────────────────────────────────────
+            import threading
+
+            def _save_all():
+                try:
+                    save_exchange_to_memory(user_id, session_id, question, answer)
+                    save_message(session_id, user_id, "user", question)
+                    save_message(session_id, user_id, "assistant", answer)
+                except Exception as e:
+                    logger.error(f"Background save failed: {e}")
+
+            threading.Thread(target=_save_all, daemon=True).start()
+
 
         # ── 7. Sources ────────────────────────────────────────
         def score_to_confidence(score: float) -> int:
@@ -471,7 +470,16 @@ Document context:
         logger.error(f"Error generating answer: {e}")
         logger.error(traceback.format_exc())
         if _langfuse:
-            try: _langfuse.flush()
+            try: 
+                import threading
+
+                def _flush_langfuse():
+                    try:
+                        _langfuse.flush()
+                    except:
+                        pass
+
+                threading.Thread(target=_flush_langfuse, daemon=True).start()
             except Exception: pass
         return {"answer": f"An error occurred: {str(e)}", "sources": [], "trace_id": trace_id}
 
@@ -486,7 +494,16 @@ def log_user_feedback(trace_id: str, thumbs_up: bool, comment: str = ""):
             value=1.0 if thumbs_up else 0.0,
             comment=comment or ("positive" if thumbs_up else "negative"),
         )
-        _langfuse.flush()
+        import threading
+
+        def _flush_langfuse():
+            try:
+                _langfuse.flush()
+            except:
+                pass
+
+        threading.Thread(target=_flush_langfuse, daemon=True).start()
+
         logger.info(f"[langfuse] Feedback logged for trace {trace_id}")
     except Exception as e:
         logger.warning(f"[langfuse] Failed to log feedback: {e}")
