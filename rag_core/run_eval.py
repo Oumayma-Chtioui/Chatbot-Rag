@@ -6,16 +6,16 @@ Features
 - Core RAG pipeline (ingest → embed → retrieve → generate)
 - Experiment runner: vary chunk_size, overlap, top_k, query_reformulation
 - RAGAS evaluation: answer_relevancy, faithfulness, context_recall, context_precision
-- Langfuse tracing: every run is a trace with scores attached
+# - Langfuse tracing: every run is a trace with scores attached
 - Outputs a timestamped JSON + CSV results file
 
 .env keys needed
 ----------------
     MISTRAL_API_KEY=...          ← used for RAG generation AND RAGAS judge
     OPENROUTER_API_KEY=...       ← fallback generation
-    LANGFUSE_PUBLIC_KEY=pk-lf-...
-    LANGFUSE_SECRET_KEY=sk-lf-...
-    LANGFUSE_HOST=https://cloud.langfuse.com
+#    LANGFUSE_PUBLIC_KEY=pk-lf-...
+#    LANGFUSE_SECRET_KEY=sk-lf-...
+#    LANGFUSE_HOST=https://cloud.langfuse.com
 """
 
 import os
@@ -33,7 +33,14 @@ from langchain_ollama import ChatOllama
 import pandas as pd
 from dotenv import load_dotenv
 
+import re
+from typing import Tuple
+
 load_dotenv()
+
+# ── Disable LangSmith tracing (auto-enabled by LangChain if LANGCHAIN_API_KEY is set) ──
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGCHAIN_TRACING"] = "false"
 
 # ── safe Unicode printing (Windows cp1252 guard) ─────────────────────────────
 def safe_print(*args, **kwargs):
@@ -54,13 +61,13 @@ print = safe_print  # shadow built-in
 # ── env ───────────────────────────────────────────────────────────────────────
 MISTRAL_API_KEY     = os.getenv("MISTRAL_API_KEY", "")
 OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
-LANGFUSE_SECRET_KEY="sk-lf-08452f62-197d-4fb3-8ae8-79b642254d43"
-LANGFUSE_PUBLIC_KEY="pk-lf-288b8bdd-2abd-4196-b009-55b7208666b6"
-LANGFUSE_BASE_URL="https://cloud.langfuse.com"
-LANGFUSE_HOST        = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+# LANGFUSE_SECRET_KEY="sk-lf-08452f62-197d-4fb3-8ae8-79b642254d43"
+# LANGFUSE_PUBLIC_KEY="pk-lf-288b8bdd-2abd-4196-b009-55b7208666b6"
+# LANGFUSE_BASE_URL="https://cloud.langfuse.com"
+# LANGFUSE_HOST        = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # for both RAG and RAGAS (keep consistent for fair eval)
-JUDGE_MODEL  = "mistral-small-latest"   
+JUDGE_MODEL  = "mistral-small-latest"
 GEN_MODEL    = "mistral-small-latest"   # generation model
 
 # ── LangChain / FAISS ─────────────────────────────────────────────────────────
@@ -80,7 +87,7 @@ from ragas.metrics import (
 from datasets import Dataset as HFDataset
 
 # ── Langfuse (current SDK — no deprecated imports) ────────────────────────────
-from langfuse import Langfuse
+# from langfuse import Langfuse
 
 import logging
 logging.basicConfig(level=logging.WARNING)   # suppress HF noise
@@ -177,36 +184,13 @@ examples in feature space. The choice of k and distance metric heavily influence
 #   JUDGE_MODEL = "gemini-2.0-flash" which has a separate 1500 req/day quota.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def get_ragas_judge():
     """
     Returns a RAGAS-compatible LLM object for use as the evaluation judge.
     Priority: Mistral → OpenRouter → None
     Uses LangchainLLMWrapper with ChatMistralAI (langchain_mistralai).
     """
-    try:
-        # ── 1. Ollama with retries ─────────────────────────────────────
-        max_retries = 5
-        from ragas.llms import llm_factory, LangchainLLMWrapper
-        for attempt in range(max_retries):
-            try:
-                raw = ChatOllama(
-                model="llama3.2:latest",
-                temperature=0.2,
-                )
-                # Sync smoke-test
-                raw.invoke("Reply with one word: ok")
-                wrapped = LangchainLLMWrapper(raw)
-                print(f"  [judge] Ollama llama3.2:latest ready (LangchainLLMWrapper)")
-                return wrapped
-            except Exception as e:
-                print(f"  [gen] Ollama attempt {attempt + 1}/{max_retries} failed ({e})")
-                if attempt < max_retries - 1:
-                    time.sleep(1)  # wait before retry
-
-
-        
-    except Exception as e:
-        print(f"  [judge] Ollama failed ({e}), trying Mistral...")
 
     # ── Option 1: Mistral via LangchainLLMWrapper ─────────────────────────
     if MISTRAL_API_KEY:
@@ -288,24 +272,15 @@ def get_ragas_embeddings():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LANGFUSE
+# LANGFUSE  (disabled — tracing removed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_langfuse() -> Optional[Langfuse]:
-    if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY:
-        print("[langfuse] Keys not set — tracing disabled.")
-        return None
-    try:
-        lf = Langfuse(
-            public_key=LANGFUSE_PUBLIC_KEY,
-            secret_key=LANGFUSE_SECRET_KEY,
-            host=LANGFUSE_HOST,
-        )
-        print(f"[langfuse] Connected to {LANGFUSE_HOST}")
-        return lf
-    except Exception as e:
-        print(f"[langfuse] Init failed: {e}")
-        return None
+# def get_langfuse() -> Optional[Langfuse]:
+#     print("[langfuse] Tracing disabled.")
+#     return None
+
+def get_langfuse():
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -385,7 +360,7 @@ class RAGPipeline:
     chunk_overlap     : overlap between chunks (default 200)
     top_k             : retrieved chunks per query (default 6)
     use_reformulation : rewrite query before retrieval (default True)
-    """ 
+    """
 
     #(1000, 200, 6, True, "baseline_topk6") fixed baseline
 
@@ -396,11 +371,12 @@ class RAGPipeline:
         top_k=6,
         use_reformulation=False,
         embed_model: str = EMBED_MODEL,
-
         use_reranker=False,
         use_cross_encoder=False,
         use_multiquery=False,
         use_postprocessing=False,
+        use_parent_doc=False,
+        use_hybrid=False, 
     ):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -410,6 +386,8 @@ class RAGPipeline:
         self.use_cross_encoder = use_cross_encoder
         self.use_multiquery = use_multiquery
         self.use_postprocessing = use_postprocessing
+        self.use_parent_doc = use_parent_doc
+        self.use_hybrid=use_hybrid
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=embed_model,
@@ -435,6 +413,7 @@ class RAGPipeline:
     # ── ingest ────────────────────────────────────────────────────────────
 
     def ingest_text(self, text: str, source: str = "corpus") -> int:
+        from langchain_community.retrievers import BM25Retriever
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
@@ -444,17 +423,21 @@ class RAGPipeline:
         chunks = []
         #Parent document retrieval
         for i, chunk in enumerate(raw_chunks):
-            parent_id = i // 3  # group 3 chunks per parent
-            chunk.metadata["parent_id"] = parent_id
-            window_size = 1  # number of chunks per parent
-            start = max(0, i - window_size)
-            end   = min(len(raw_chunks), i + window_size)
-            parent_text = " ".join(
-                raw_chunks[j].page_content for j in range(start, end)
-            )
-            chunk.metadata["parent_text"] = parent_text
+            if self.use_parent_doc:
+                parent_id = i // 3
+                chunk.metadata["parent_id"] = parent_id
+                window_size = 1
+                start = max(0, i - window_size)
+                end = min(len(raw_chunks), i + window_size)
+                chunk.metadata["parent_text"] = " ".join(
+                    raw_chunks[j].page_content for j in range(start, end)
+                )
             chunks.append(chunk)
         self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
+        # ✅ Build BM25 index
+        if self.use_hybrid:
+            self.bm25 = BM25Retriever.from_documents(chunks)
+            self.bm25.k = self.top_k
         print(f"  indexed {len(chunks)} chunks from '{source}'")
         return len(chunks)
 
@@ -486,25 +469,43 @@ class RAGPipeline:
         except Exception:
             return question
 
-    def retrieve(self, question: str, lf: Optional[Langfuse] = None) -> tuple[str, list[str]]:
+    def retrieve(self, question: str, lf=None) -> tuple[str, list[str]]:
         if self.vectorstore is None:
             raise RuntimeError("Call ingest_text() first.")
 
         effective = self._reformulate(question) if self.use_reformulation else question
         queries = self.generate_queries(question)
 
-        # After similarity_search, collect raw docs (not parent_text yet)
         all_docs = []
+
         for q in queries:
-            docs = self.vectorstore.max_marginal_relevance_search(q, k=10, fetch_k=20, lambda_mult=0.7)            
-            all_docs.extend(docs)
+            dense_docs = self.vectorstore.max_marginal_relevance_search(
+                q, k=10, fetch_k=20, lambda_mult=0.7
+            )
+
+            if self.use_hybrid:
+                sparse_docs = self.bm25.invoke(q)
+
+                # ✅ merge + deduplicate
+                combined = dense_docs + sparse_docs
+
+                seen_texts = set()
+                merged = []
+                for d in combined:
+                    if d.page_content not in seen_texts:
+                        seen_texts.add(d.page_content)
+                        merged.append(d)
+
+                all_docs.extend(merged)
+            else:
+                all_docs.extend(dense_docs)
 
         # Deduplicate by chunk index
         seen = {}
         for d in all_docs:
-            idx = d.metadata.get("parent_id")
-            if idx not in seen:
-                seen[idx] = d
+            key = d.metadata.get("parent_id") if self.use_parent_doc else d.page_content
+            if key not in seen:
+                seen[key] = d
 
         # Rerank on raw chunk content first
         candidates = list(seen.values())
@@ -524,18 +525,16 @@ class RAGPipeline:
                 if d.page_content in raw_texts:
                     contexts.append(d.metadata.get("parent_text", d.page_content))
         else:
-            contexts = [d.metadata.get("parent_text", d.page_content) for d in candidates[:self.top_k]]
-
-        if lf:
-            # Child span under the current trace/observation context (if any).
-            with lf.start_as_current_observation(
-                as_type="span",
-                name="retrieval",
-                input={"query": question, "reformulated": effective},
-                output={"chunks_retrieved": len(contexts), "contexts": contexts[:2]},
-                metadata={"top_k": self.top_k, "reformulation": self.use_reformulation},
-            ):
-                pass
+            contexts = [d.metadata.get("parent_text", d.page_content) if self.use_parent_doc else d.page_content for d in candidates[:self.top_k]]
+        # if lf:
+        #     with lf.start_as_current_observation(
+        #         as_type="span",
+        #         name="retrieval",
+        #         input={"query": question, "reformulated": effective},
+        #         output={"chunks_retrieved": len(contexts), "contexts": contexts[:2]},
+        #         metadata={"top_k": self.top_k, "reformulation": self.use_reformulation},
+        #     ):
+        #         pass
 
         return effective, contexts
 
@@ -557,7 +556,7 @@ class RAGPipeline:
         """
         t0 = time.time()
         effective_query, contexts = self.retrieve(question, trace)
-        
+
         answer = self.generate(question, contexts, trace)
         latency = round(time.time() - t0, 3)
 
@@ -571,7 +570,7 @@ class RAGPipeline:
 
     # ── generate ──────────────────────────────────────────────────────────
 
-    def generate(self, question: str, contexts: list[str], lf: Optional[Langfuse] = None) -> str:
+    def generate(self, question: str, contexts: list[str], lf=None) -> str:
         context_block = "\n\n---\n\n".join(contexts)
         system_prompt = textwrap.dedent( f"""You are a helpful assistant.
 Answer the question based on the provided context.
@@ -587,24 +586,23 @@ Context:
         answer = self.postprocess(answer, question)
         lat    = round(time.time() - t0, 3)
         output = answer if isinstance(answer, str) else str(answer)
-        if lf:
-            # Generation observation under the current trace/observation context (if any).
-            with lf.start_as_current_observation(
-                as_type="generation",
-                name="llm-generation",
-                model=model,
-                input=question,
-                metadata={"latency_s": lat, "context_chunks": len(contexts)},
-            ):
-                lf.update_current_generation(output=output)
+        # if lf:
+        #     with lf.start_as_current_observation(
+        #         as_type="generation",
+        #         name="llm-generation",
+        #         model=model,
+        #         input=question,
+        #         metadata={"latency_s": lat, "context_chunks": len(contexts)},
+        #     ):
+        #         lf.update_current_generation(output=output)
         return answer
     def overlap_score(self, q, s):
         q_words = set(q.lower().split())
         s_words = set(s.lower().split())
-        
+
         if not s_words:
             return 0
-        
+
         return len(q_words & s_words) / len(s_words)
 
     # Post-Processing
@@ -613,8 +611,8 @@ Context:
             return answer
 
         sentences = answer.split(".")
-        best = max(sentences, key=lambda s: self.overlap_score(question, s))
-        return best.strip()
+        relevant = [s for s in sentences if self.overlap_score(question, s) >= 0.1]
+        return ". ".join(relevant) + "."
 
 # Simple semantic reranker
 def rerank_contexts(query, contexts, embedder, top_k=6):
@@ -680,6 +678,12 @@ def run_ragas(results: list[dict]) -> dict:
 
     # RAGAS >=0.2 requires the LLM set directly on each metric object,
     # passing only via evaluate(..., llm=) is not enough for answer_relevancy.
+    #
+    # HybridJudgeLLM is used ONLY as a standalone metric below — NOT as the
+    # RAGAS judge. RAGAS needs a model that emits structured JSON schemas
+    # (faithfulness verdicts, TP/FP/FN lists, etc.). Phi-3 Mini cannot do this
+    # reliably → RagasOutputParserException on every job.
+    # get_ragas_judge() uses Ollama → Mistral → OpenRouter, all of which work.
 
     judge_llm    = get_ragas_judge()
     ragas_embeds = get_ragas_embeddings()
@@ -690,8 +694,8 @@ def run_ragas(results: list[dict]) -> dict:
                 m.llm = judge_llm
             except Exception:
                 pass
-            
-        
+
+
 
     metrics = [
         faithfulness,
@@ -745,6 +749,7 @@ def run_ragas(results: list[dict]) -> dict:
         "answer_correctness": _safe("answer_correctness"),
     }
 
+
     present = [v for v in scores.values() if isinstance(v, (int, float))]
     scores["composite"] = round(sum(present) / len(present), 4) if present else None
 
@@ -760,63 +765,66 @@ def run_ragas(results: list[dict]) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LANGFUSE EXPERIMENT LOGGING
+# LANGFUSE EXPERIMENT LOGGING  (disabled)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def log_to_langfuse(
-    lf: Optional[Langfuse],
-    experiment_name: str,
-    config: dict,
-    results: list[dict],
-    ragas_scores: dict,
-) -> Optional[str]:
-    if lf is None:
-        return None
+# def log_to_langfuse(
+#     lf,
+#     experiment_name: str,
+#     config: dict,
+#     results: list[dict],
+#     ragas_scores: dict,
+# ) -> Optional[str]:
+#     if lf is None:
+#         return None
+#
+#     print(f"\n[langfuse] Logging experiment: {experiment_name}")
+#
+#     trace_id = lf.create_trace_id()
+#     with lf.start_as_current_observation(
+#         as_type="span",
+#         name=experiment_name,
+#         metadata={
+#             "config": config,
+#             "ragas_scores": ragas_scores,
+#             "n_questions": len(results),
+#             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+#             "tags": ["rag-eval", "novamind"],
+#         },
+#     ):
+#         trace_id=trace_id,
+#
+#         for i, r in enumerate(results):
+#             with lf.start_as_current_observation(
+#                 as_type="span",
+#                 name=f"qa_{i+1}",
+#                 input={"question": r["question"]},
+#                 output={
+#                     "answer": r["answer"],
+#                     "contexts": r["contexts"][:1],  # first context only to save space
+#                 },
+#                 metadata={
+#                     "effective_query": r.get("effective_query", ""),
+#                     "latency_s": r.get("latency_s", 0),
+#                     "ground_truth": r.get("ground_truth", ""),
+#                 },
+#             ):
+#                 pass
+#
+#         for metric, value in ragas_scores.items():
+#             if isinstance(value, (int, float)):
+#                 lf.score_current_trace(
+#                     name=metric,
+#                     value=float(value),
+#                     data_type="NUMERIC",
+#                     comment=f"RAGAS {metric} for experiment '{experiment_name}'",
+#                 )
+#     lf.flush()
+#     print(f"  [langfuse] Trace logged -> {LANGFUSE_HOST}")
+#     return trace_id
 
-    print(f"\n[langfuse] Logging experiment: {experiment_name}")
-
-    trace_id = lf.create_trace_id()
-    with lf.start_as_current_observation(
-        as_type="span",
-        name=experiment_name,
-        metadata={
-            "config": config,
-            "ragas_scores": ragas_scores,
-            "n_questions": len(results),
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "tags": ["rag-eval", "novamind"],
-        },
-    ): 
-        trace_id=trace_id,
-
-        for i, r in enumerate(results):
-            with lf.start_as_current_observation(
-                as_type="span",
-                name=f"qa_{i+1}",
-                input={"question": r["question"]},
-                output={
-                    "answer": r["answer"],
-                    "contexts": r["contexts"][:1],  # first context only to save space
-                },
-                metadata={
-                    "effective_query": r.get("effective_query", ""),
-                    "latency_s": r.get("latency_s", 0),
-                    "ground_truth": r.get("ground_truth", ""),
-                },
-            ):
-                pass
-
-        for metric, value in ragas_scores.items():
-            if isinstance(value, (int, float)):
-                lf.score_current_trace(
-                    name=metric,
-                    value=float(value),
-                    data_type="NUMERIC",
-                    comment=f"RAGAS {metric} for experiment '{experiment_name}'",
-                )
-    lf.flush()
-    print(f"  [langfuse] Trace logged -> {LANGFUSE_HOST}")
-    return trace_id
+def log_to_langfuse(lf, experiment_name, config, results, ragas_scores):
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -824,36 +832,52 @@ def log_to_langfuse(
 # ══════════════════════════════════════════════════════════════════════════════
 
 EXPERIMENT_GRID = [
-    # topk6
-    (1000, 200, 6, False, False, False, False, False, "top_k=6"),
+    # top_k
+    (1000, 200, 6, False, False, False, False, False, False,  False, "top_k=6"),
+    (1000, 200, 8, False, False, False, False, False,False,  False, "top_k=8"),
+    (1000, 200, 10, False, False, False, False, False, False, False, "top_k=10"),
 
-    # topk4
-    (1000, 200, 4, False, False, False, False, False, "top_k=4"),
+    #SEMANTIC RERANKER
+    (1000, 200, 6, False, True, False, False, False, False, False, "semantic_reranker_top_k=6"),
+    (1000, 200, 8, False, True, False, False, False, False, False, "semantic_reranker_top_k=8"),
+    (1000, 200, 10, False, True, False, False, False, False, False, "semantic_reranker_top_k=10"),
 
-    #topk10
-    (1000, 200, 10, False, False, False, False, False, "top_k=10"),
+    # CROSS-ENCODER
+    (1000, 200, 6, False, False, True, False, False, False, False, "cross_encoder_top_k=6"),
+    (1000, 200, 8, False, False, True, False, False, False, False, "cross_encoder_top_k=8"),
+    (1000, 200, 10, False, False, True, False, False,False, False,  "cross_encoder_top_k=10"),
 
-    # topk3
-    (1000, 200, 3, False, False, False, False, False, "top_k=3"),
+    # MULTI-QUERY
+    (1000, 200, 6, False, False, False, True, False, False, False, "multiquery_top_k=6"),
+    (1000, 200, 8, False, False, False, True, False, False, False, "multiquery_top_k=8"),
+    (1000, 200, 10, False, False, False, True, False, False, False, "multiquery_top_k=10"),
 
-    # #SEMANTIC RERANKER
-    # (1000, 200, 6, False, True, False, False, False, "semantic_reranker"),
+    # POST-PROCESSING
+    (1000, 200, 6, False, False, False, False, True, False, False, "postprocess_top_k=6"),
+    (1000, 200, 8, False, False, False, False, True, False, False, "postprocess_top_k=8"),
+    (1000, 200, 10, False, False, False, False, True, False, False, "postprocess_top_k=10"),
 
-    # # CROSS-ENCODER
-    # (1000, 200, 6, False, False, True, False, False, "cross_encoder"),
+    # COMBINATIONS 🔥
+    (1000, 200, 6, False, False, True, True, False, False, False, "cross+multi_top_k=6"),
+    (1000, 200, 8, False, False, True, True, False, False, False, "cross+multi_top_k=8"),
+    (1000, 200, 10, False, False, True, True, False, False, False, "cross+multi_top_k=10"),
 
-    # # MULTI-QUERY
-    # (1000, 200, 6, False, False, False, True, False, "multiquery"),
+    (1000, 200, 6, False, False, True, False, True, False, False, "cross+post_top_k=6"),
+    (1000, 200, 8, False, False, True, False, True, False, False, "cross+post_top_k=8"),
+    (1000, 200, 10, False, False, True, False, True, False, False, "cross+post_top_k=10"),
 
-    # # POST-PROCESSING
-    # (1000, 200, 6, False, False, False, False, True, "postprocess"),
+    (1000, 200, 6, False, False, True, True, True, False, False, "full_pipeline_top_k=6"),
+    (1000, 200, 8, False, False, True, True, True, False, False, "full_pipeline_top_k=8"),
+    (1000, 200, 10, False, False, True, True, True, False, False, "full_pipeline_top_k=10"),
 
-    # # COMBINATIONS 🔥
-    # (1000, 200, 6, False, False, True, True, False, "cross+multi"),
-    # (1000, 200, 6, False, False, True, False, True, "cross+post"),
-    # (1000, 200, 6, False, False, True, True, True, "full_pipeline"),
+    (1000, 200, 4, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=4"),
+    (1000, 200, 8, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=8"),
+    (1000, 200, 10, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=10"),
 
-    # (1000, 200, 4, False, False, True, True, False, "parent_doc_rerank"),
+    (1000, 200, 6, False, False, False, False, False, False, True, "hybrid_topk6"),
+    (1000, 200, 8, False, False, False, False, False, False, True, "hybrid_topk8"),
+    (1000, 200, 10, False, False, False, False, False, False, True, "hybrid_topk10"),
+
 ]
 
 # EXPERIMENT_GRID = [
@@ -870,7 +894,7 @@ def run_experiment(
     config: tuple,
     corpus_text: str,
     eval_rows: list[dict],
-    lf: Optional[Langfuse],
+    lf=None,
 ) -> dict:
     (
         chunk_size,
@@ -881,12 +905,14 @@ def run_experiment(
         use_cross_encoder,
         use_multiquery,
         use_postprocessing,
+        use_parent_doc,
+        use_hybrid,
         label
     ) = config
     print(f"\n{'='*65}")
     print(f"EXPERIMENT: {label}")
     print(f"  chunk={chunk_size}  overlap={overlap}  top_k={top_k}  reform={use_reform}")
-    print(f"  reranker={use_reranker}  cross_encoder={use_cross_encoder}  multiquery={use_multiquery}  postprocess={use_postprocessing}")
+    print(f"  reranker={use_reranker}  cross_encoder={use_cross_encoder}  multiquery={use_multiquery}  postprocess={use_postprocessing} use_parent_doc={use_parent_doc}")
     print("="*65)
     pipeline = RAGPipeline(
         chunk_size=chunk_size,
@@ -897,6 +923,8 @@ def run_experiment(
         use_cross_encoder=use_cross_encoder,
         use_multiquery=use_multiquery,
         use_postprocessing=use_postprocessing,
+        use_parent_doc=use_parent_doc,
+        use_hybrid=use_hybrid
     )
     pipeline.ingest_text(corpus_text)
 
@@ -905,28 +933,28 @@ def run_experiment(
         question     = row["question"]
         ground_truth = row["ground_truth"]
 
-        # Per-question Langfuse trace (v4+ observation model)
-        if lf:
-            trace_id = lf.create_trace_id()
-            with lf.start_as_current_observation(
-                as_type="span",
-                name=f"{label}: {question[:80]}",
-                input={"question": question},
-                metadata={
-                    "experiment": label,
-                    "ground_truth": ground_truth,
-                    "tags": ["rag-eval", label],
-                },
-            ):
-                result = pipeline.query(question, lf)
-                trace_id = lf.get_current_trace_id()
-
-            result["langfuse_trace_id"] = trace_id
-        else:
-            result = pipeline.query(question, lf=None)
+        # Per-question Langfuse trace (disabled)
+        # if lf:
+        #     trace_id = lf.create_trace_id()
+        #     with lf.start_as_current_observation(
+        #         as_type="span",
+        #         name=f"{label}: {question[:80]}",
+        #         input={"question": question},
+        #         metadata={
+        #             "experiment": label,
+        #             "ground_truth": ground_truth,
+        #             "tags": ["rag-eval", label],
+        #         },
+        #     ):
+        #         result = pipeline.query(question, lf)
+        #         trace_id = lf.get_current_trace_id()
+        #     result["langfuse_trace_id"] = trace_id
+        # else:
+        #     result = pipeline.query(question, lf=None)
+        result = pipeline.query(question)
         result["ground_truth"] = ground_truth
         results.append(result)
-        
+
     latencies = [r["latency_s"] for r in results]
     p95_latency = float(np.percentile(latencies, 95))
     print(f"  p95 latency: {p95_latency:.3f}s")
@@ -940,20 +968,14 @@ def run_experiment(
         "reform":     use_reform,
         "label":      label,
     }
-    trace_id = log_to_langfuse(
-        lf,
-        f"novamind-{label}-{datetime.date.today()}",
-        config_dict,
-        results,
-        ragas_scores,
-    )
+    # log_to_langfuse call removed (tracing disabled)
+    # trace_id = log_to_langfuse(lf, f"novamind-{label}-{datetime.date.today()}", config_dict, results, ragas_scores)
 
     return {
         "label":        label,
         "config":       config_dict,
         "ragas_scores": ragas_scores,
         "results":      results,
-        "trace_id":     trace_id,
         "p95_latency": p95_latency,
     }
 
@@ -995,9 +1017,9 @@ def save_results(all_experiments: list[dict], out_dir: str = "."):
 
     # Console table
     H = ["EXPERIMENT", "FAITHFUL", "RECALL", "PRECISION", "CORRECTNESS", "COMPOSITE"]
-    print("\n" + "="*95)
-    print(f"{H[0]:<22} {H[1]:>10} {H[2]:>8} {H[3]:>10} {H[4]:>12} {H[5]:>10}")
-    print("-"*95)
+    print("\n" + "="*107)
+    print(f"{H[0]:<22} {H[1]:>10} {H[2]:>8} {H[3]:>10} {H[4]:>12} {H[5]:>8}")
+    print("-"*107)
 
     def _f(v):
         return f"{v:>10.4f}" if isinstance(v, (int, float)) else f"{'n/a':>10}"
@@ -1012,7 +1034,7 @@ def save_results(all_experiments: list[dict], out_dir: str = "."):
             f"{_f(s.get('answer_correctness'))}"
             f"{_f(s.get('composite'))}"
         )
-    print("="*95)
+    print("="*107)
 
     scoreable = [e for e in all_experiments if isinstance(e["ragas_scores"].get("composite"), (int, float))]
     if scoreable:
@@ -1040,6 +1062,45 @@ def load_corpus(file_path: str) -> str:
     else:
         raise ValueError(f"Unsupported file type: {path.suffix}. Use .pdf or .txt")
 
+def _experiment_group(label: str) -> str:
+    """Extract the experiment type prefix from a label (everything before _top_k or =)."""
+    # e.g. "cross_encoder_top_k=6" -> "cross_encoder"
+    #      "full_pipeline_top_k=10" -> "full_pipeline"
+    #      "semantic_reranker_top_k=10" -> "semantic_reranker"
+    import re
+    m = re.match(r"^(.*?)(?:_top_k|top_k)", label)
+    if m:
+        return m.group(1).strip("_") or label
+    return label
+
+
+def print_group_summary(group: list[dict], title: str = ""):
+    """Print a mini results table for a group of experiments."""
+    H = ["EXPERIMENT", "FAITHFUL", "RECALL", "PRECISION", "CORRECTNESS", "COMPOSITE"]
+    width = 107
+    header = title if title else "INTERIM RESULTS"
+    print(f"\n{'─'*width}")
+    print(f"  {header}")
+    print(f"{'─'*width}")
+    print(f"{H[0]:<28} {H[1]:>10} {H[2]:>8} {H[3]:>10} {H[4]:>12} {H[5]:>10}")
+    print(f"{'─'*width}")
+
+    def _f(v):
+        return f"{v:>10.4f}" if isinstance(v, (int, float)) else f"{'n/a':>10}"
+
+    for exp in group:
+        s = exp["ragas_scores"]
+        print(
+            f"{exp['label']:<28}"
+            f"{_f(s.get('faithfulness'))}"
+            f"{_f(s.get('context_recall'))}"
+            f"{_f(s.get('context_precision'))}"
+            f"{_f(s.get('answer_correctness'))}"
+            f"{_f(s.get('composite'))}"
+        )
+    print(f"{'─'*width}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="NovaMind RAG Evaluator")
     parser.add_argument("--experiment", choices=["all", "single"], default="all")
@@ -1048,14 +1109,14 @@ def main():
     parser.add_argument("--out",  default=".",  help="output directory")
     args = parser.parse_args()
 
-    print("NovaMind RAG Evaluation Harness  (RAGAS + Langfuse)")
+    print("NovaMind RAG Evaluation Harness")
     print("="*55)
 
     if args.doc:
         corpus_text = load_corpus(args.doc)
         print(f"Loaded corpus from {args.doc} ({len(corpus_text)} characters)")
     else:
-        corpus_text = BUILTIN_CORPUS  # your hardcoded fallback
+        corpus_text = BUILTIN_CORPUS
         print("Using built-in ML corpus")
 
     eval_rows = load_eval_csv(args.csv)
@@ -1063,14 +1124,29 @@ def main():
     grid      = [EXPERIMENT_GRID[0]] if args.experiment == "single" else EXPERIMENT_GRID
 
     all_results = []
+
+    # ── Group configs by experiment type so we print k=4/6/8/10 variants together ──
+    # Preserve original order but bucket by group name
+    from collections import OrderedDict
+    groups: OrderedDict[str, list] = OrderedDict()
     for config in grid:
-        all_results.append(run_experiment(config, corpus_text, eval_rows, lf))
+        label = config[-1]
+        grp = _experiment_group(label)
+        groups.setdefault(grp, []).append(config)
 
+    # ── Run experiments group by group, printing after each group finishes ──
+    for grp_name, configs in groups.items():
+        grp_results = []
+        for config in configs:
+            result = run_experiment(config, corpus_text, eval_rows, lf)
+            all_results.append(result)
+            grp_results.append(result)
+
+        # Print the group summary as soon as all variants of this experiment finish
+        print_group_summary(grp_results, title=f"GROUP: {grp_name.upper()}")
+
+    # ── Final full summary ──
     save_results(all_results, out_dir=args.out)
-
-    if lf:
-        lf.flush()
-        print(f"\nAll traces flushed to Langfuse -> {LANGFUSE_HOST}")
 
 
 if __name__ == "__main__":
