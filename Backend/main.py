@@ -6,7 +6,7 @@ from database import Base, engine
 from models.user import UserModel, ChatSessionModel, MessageModel
 from models.widget import WidgetBot, WidgetApiKey
 
-from routers import admin, auth, sessions, documents, chat
+from routers import admin, auth, sessions, documents, chat, widgets
 from routers.widgets import router as widgets_router
 from routers.widget_chat import router as widget_chat_router
 from routers.widget_chat import limiter
@@ -42,6 +42,8 @@ app.include_router(sessions.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
+app.include_router(widgets.router)
+
 
 # Widget routers
 app.include_router(widgets_router)

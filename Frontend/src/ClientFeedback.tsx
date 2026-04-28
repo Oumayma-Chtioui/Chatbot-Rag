@@ -15,7 +15,7 @@ interface FeedbackItem {
 }
 
 interface TestSession {
-  id: string;
+  session_id: string;
   email: string;
   granted_at: string;
   expires_at: string;
@@ -338,7 +338,7 @@ export default function ClientFeedback({ bot }: Props) {
                     </div>
                     <button
                       className="cl-btn-danger"
-                      onClick={() => handleRevokeTest(s.id)}
+                      onClick={() => handleRevokeTest(s.session_id)}
                       title="Revoke test access"
                     >
                       ✕

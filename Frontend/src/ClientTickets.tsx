@@ -1,15 +1,22 @@
 import React, { useEffect, useState, useRef } from "react";
 import { getTickets, respondToTicket, deleteTicket } from "./api";
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
 interface Ticket {
-  ticket_id:   string;
-  question:    string;
-  user_email:  string;
-  status:      "pending_verification" | "pending_response" | "answered";
-  created_at:  string;
-  answered_at: string | null;
-  answer:      string | null;
-  bot_name:    string;
+  ticket_id:    string;
+  question:     string;
+  user_email:   string;
+  status:       "pending_verification" | "pending_response" | "answered";
+  created_at:   string;
+  answered_at:  string | null;
+  answer:       string | null;
+  bot_name:     string;
+  chat_history?: ChatMessage[];
 }
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
@@ -46,8 +53,7 @@ const fmtDate = (iso: string) =>
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-const initials = (email: string) =>
-  email.slice(0, 2).toUpperCase();
+const initials = (email: string) => email.slice(0, 2).toUpperCase();
 
 /* ─── sub-components ──────────────────────────────────────────────────────── */
 
@@ -68,6 +74,132 @@ const StatusBadge: React.FC<{ status: Ticket["status"] }> = ({ status }) => {
       }} />
       {m.short}
     </span>
+  );
+};
+
+/* Chat history thread shown in the ticket detail pane */
+const ChatHistoryPanel: React.FC<{ history: ChatMessage[] }> = ({ history }) => {
+  const [collapsed, setCollapsed] = useState(false);
+  const isEmpty = !history || history.length === 0;
+
+  return (
+    <div style={{
+      border: "1px solid var(--border)",
+      borderRadius: 12,
+      overflow: "hidden",
+      background: "var(--bg)",
+    }}>
+      {/* header — always shown, collapsible only when there's content */}
+      <button
+        onClick={() => { if (!isEmpty) setCollapsed(c => !c); }}
+        style={{
+          width: "100%",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "11px 16px",
+          background: "rgba(127,119,221,0.06)",
+          border: "none",
+          borderBottom: (isEmpty || collapsed) ? "none" : "1px solid var(--border)",
+          cursor: isEmpty ? "default" : "pointer",
+          color: "var(--text2)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14 }}>💬</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", letterSpacing: "0.01em" }}>
+            Conversation history
+          </span>
+          <span style={{
+            fontSize: 11, fontWeight: 700,
+            background: isEmpty ? "var(--bg3)" : "rgba(127,119,221,0.18)",
+            color: isEmpty ? "var(--text3)" : "var(--accent-light)",
+            borderRadius: 10, padding: "1px 7px",
+          }}>
+            {isEmpty ? "no messages" : `${history.length} message${history.length !== 1 ? "s" : ""}`}
+          </span>
+        </div>
+        {!isEmpty && (
+          <span style={{
+            fontSize: 12, color: "var(--text3)",
+            transform: collapsed ? "rotate(0deg)" : "rotate(180deg)",
+            transition: "transform 0.2s",
+            display: "inline-block",
+          }}>▲</span>
+        )}
+      </button>
+
+      {/* empty state */}
+      {isEmpty && (
+        <div style={{
+          padding: "12px 16px",
+          fontSize: 12, color: "var(--text3)",
+          fontStyle: "italic",
+        }}>
+          No prior conversation — the user submitted this question directly.
+        </div>
+      )}
+
+      {/* messages */}
+      {!isEmpty && !collapsed && (
+        <div style={{
+          maxHeight: 340,
+          overflowY: "auto",
+          padding: "14px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}>
+          {history.map((msg, i) => {
+            const isUser = msg.role === "user";
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: isUser ? "flex-end" : "flex-start",
+                  animation: "fadeUp 0.2s ease both",
+                  animationDelay: `${i * 0.03}s`,
+                }}
+              >
+                {/* role label */}
+                <span style={{
+                  fontSize: 10, fontWeight: 600,
+                  color: isUser ? "var(--accent-light)" : "var(--text3)",
+                  marginBottom: 3,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                }}>
+                  {isUser ? "User" : "Bot"}
+                </span>
+
+                {/* bubble */}
+                <div style={{
+                  maxWidth: "82%",
+                  padding: "9px 13px",
+                  borderRadius: isUser
+                    ? "12px 12px 3px 12px"
+                    : "12px 12px 12px 3px",
+                  background: isUser
+                    ? "rgba(127,119,221,0.15)"
+                    : "var(--bg2)",
+                  border: "1px solid",
+                  borderColor: isUser
+                    ? "rgba(127,119,221,0.25)"
+                    : "var(--border)",
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}>
+                  {msg.content}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -113,7 +245,6 @@ const ClientTickets: React.FC = () => {
       setSent(true);
       setAnswer("");
       await load();
-      // update selected ticket in-place
       setSelected(prev =>
         prev ? { ...prev, status: "answered", answer, answered_at: new Date().toISOString() } : null
       );
@@ -130,9 +261,7 @@ const ClientTickets: React.FC = () => {
     try {
       await deleteTicket(ticket.ticket_id);
       await load();
-      if (selected?.ticket_id === ticket.ticket_id) {
-        setSelected(null);
-      }
+      if (selected?.ticket_id === ticket.ticket_id) setSelected(null);
     } catch (err: any) {
       alert(`Failed to delete ticket: ${err.message}`);
     }
@@ -280,7 +409,6 @@ const ClientTickets: React.FC = () => {
             ) : (
               visible.map((t, i) => {
                 const isActive = selected?.ticket_id === t.ticket_id;
-                const m = STATUS_META[t.status];
                 return (
                   <div
                     key={t.ticket_id}
@@ -301,12 +429,9 @@ const ClientTickets: React.FC = () => {
                     {/* row 1: email + date */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {/* avatar */}
                         <div style={{
                           width: 28, height: 28, borderRadius: "50%",
-                          background: isActive
-                            ? "rgba(127,119,221,0.3)"
-                            : "var(--bg3)",
+                          background: isActive ? "rgba(127,119,221,0.3)" : "var(--bg3)",
                           color: isActive ? "var(--accent-light)" : "var(--text3)",
                           display: "flex", alignItems: "center", justifyContent: "center",
                           fontSize: 10, fontWeight: 700, flexShrink: 0,
@@ -340,9 +465,21 @@ const ClientTickets: React.FC = () => {
                       {t.question}
                     </p>
 
-                    {/* row 3: badge + bot */}
+                    {/* row 3: badge + history pill + bot */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginLeft: 36 }}>
-                      <StatusBadge status={t.status} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <StatusBadge status={t.status} />
+                        {(t.chat_history?.length ?? 0) > 0 && (
+                          <span style={{
+                            fontSize: 10, fontWeight: 600,
+                            background: "rgba(127,119,221,0.12)",
+                            color: "var(--accent-light)",
+                            borderRadius: 8, padding: "2px 6px",
+                          }}>
+                            💬 {t.chat_history!.length}
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: 10, color: "var(--text3)" }}>
                         {t.bot_name}
                       </span>
@@ -379,7 +516,7 @@ const ClientTickets: React.FC = () => {
               <div style={{
                 padding: "28px 32px",
                 animation: "slideIn 0.2s ease both",
-                display: "flex", flexDirection: "column", gap: 24,
+                display: "flex", flexDirection: "column", gap: 22,
               }}>
 
                 {/* ticket header */}
@@ -430,8 +567,8 @@ const ClientTickets: React.FC = () => {
                   gap: 12,
                 }}>
                   {[
-                    { label: "From", value: selected.user_email, icon: "◈" },
-                    { label: "Bot",  value: selected.bot_name,   icon: "◉" },
+                    { label: "From",      value: selected.user_email, icon: "◈" },
+                    { label: "Bot",       value: selected.bot_name,   icon: "◉" },
                     { label: "Submitted", value: `${fmtDate(selected.created_at)} · ${fmtTime(selected.created_at)}`, icon: "◎" },
                   ].map(({ label, value, icon }) => (
                     <div key={label} style={{
@@ -454,6 +591,9 @@ const ClientTickets: React.FC = () => {
 
                 {/* divider */}
                 <div style={{ borderTop: "1px solid var(--border)" }} />
+
+                {/* ── Chat history ── */}
+                <ChatHistoryPanel history={selected.chat_history ?? []} />
 
                 {/* answered: show reply */}
                 {selected.status === "answered" && selected.answer && (
@@ -519,12 +659,10 @@ const ClientTickets: React.FC = () => {
                       }}
                     />
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 11, color: "var(--text3)" }}>
-                        ⌘↵ to send
-                      </span>
+                      <span style={{ fontSize: 11, color: "var(--text3)" }}>⌘↵ to send</span>
                       <div style={{ display: "flex", gap: 8 }}>
                         <button
-                          onClick={() => { setAnswer(""); }}
+                          onClick={() => setAnswer("")}
                           style={{
                             background: "none",
                             border: "1px solid var(--border)",
@@ -548,10 +686,7 @@ const ClientTickets: React.FC = () => {
                           }}
                         >
                           {submitting ? (
-                            <>
-                              <span style={{ animation: "pulse 1s infinite" }}>●</span>
-                              Sending…
-                            </>
+                            <><span style={{ animation: "pulse 1s infinite" }}>●</span>Sending…</>
                           ) : (
                             <>Send reply ↗</>
                           )}
@@ -576,9 +711,7 @@ const ClientTickets: React.FC = () => {
                       color: "var(--success)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 14, flexShrink: 0,
-                    }}>
-                      ✓
-                    </span>
+                    }}>✓</span>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
                         Reply sent successfully
@@ -589,6 +722,7 @@ const ClientTickets: React.FC = () => {
                     </div>
                   </div>
                 )}
+
               </div>
             )}
           </div>

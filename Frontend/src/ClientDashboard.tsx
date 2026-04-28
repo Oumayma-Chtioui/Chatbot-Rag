@@ -45,6 +45,9 @@ interface Props { bot: { id: string; name: string } }
 type Period  = "week" | "month" | "year";
 type KwCount = 5 | 10 | 20;
 
+// ── Memory clear state ────────────────────────────────────────────────────────
+type ClearState = "idle" | "confirming" | "loading" | "done" | "error";
+
 function fmt(d: Date, opts: Intl.DateTimeFormatOptions) {
   return d.toLocaleDateString("en-US", opts);
 }
@@ -224,6 +227,95 @@ const PeriodNav: React.FC<{ label: string; offset: number; onPrev: () => void; o
   </div>
 );
 
+// ── Memory Clear Button ───────────────────────────────────────────────────────
+const ClearMemoryButton: React.FC<{ botId: string }> = ({ botId }) => {
+  const [state,   setState]   = useState<ClearState>("idle");
+  const [message, setMessage] = useState("");
+
+  const handleClick = () => {
+    if (state === "idle" || state === "done" || state === "error") {
+      setState("confirming");
+      return;
+    }
+  };
+
+  const handleConfirm = async () => {
+    setState("loading");
+    try {
+      const res = await fetch(`/widgets/bots/${botId}/memory`, { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setMessage(data.message || "Memory cleared.");
+        setState("done");
+      } else {
+        setMessage("Failed to clear memory.");
+        setState("error");
+      }
+    } catch {
+      setMessage("Network error.");
+      setState("error");
+    }
+    // Reset to idle after 4 seconds
+    setTimeout(() => setState("idle"), 4000);
+  };
+
+  const handleCancel = () => setState("idle");
+
+  const btnBase: React.CSSProperties = {
+    padding: "6px 14px",
+    borderRadius: 8,
+    border: "1px solid",
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+    transition: "opacity 0.2s",
+  };
+
+  if (state === "confirming") {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12, color: "var(--text2)" }}>
+          Clear all active conversation memory?
+        </span>
+        <button
+          onClick={handleConfirm}
+          style={{ ...btnBase, borderColor: "#ef4444", background: "rgba(239,68,68,0.12)", color: "#ef4444" }}
+        >
+          Yes, clear
+        </button>
+        <button
+          onClick={handleCancel}
+          style={{ ...btnBase, borderColor: "var(--border)", background: "var(--bg3)", color: "var(--text2)" }}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  if (state === "loading") {
+    return <span style={{ fontSize: 12, color: "var(--text3)" }}>Clearing…</span>;
+  }
+
+  if (state === "done") {
+    return <span style={{ fontSize: 12, color: "#1D9E75" }}>✓ {message}</span>;
+  }
+
+  if (state === "error") {
+    return <span style={{ fontSize: 12, color: "#ef4444" }}>✗ {message}</span>;
+  }
+
+  // idle
+  return (
+    <button
+      onClick={handleClick}
+      style={{ ...btnBase, borderColor: "var(--border)", background: "var(--bg3)", color: "var(--text2)" }}
+    >
+      🧹 Clear conversation memory
+    </button>
+  );
+};
+
 const ClientDashboard: React.FC<Props> = ({ bot }) => {
   const [data,      setData]      = useState<Analytics | null>(null);
   const [loading,   setLoading]   = useState(true);
@@ -260,7 +352,6 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
   const docUsage     = (data.document_usage ?? []).slice(0, 8);
   const maxCitations = docUsage[0]?.citations ?? 1;
 
-  // Average response time for the selected period, skipping null entries
   const rtValues = rtChartData.filter(d => d.avg_ms !== null).map(d => d.avg_ms as number);
   const avgRt    = rtValues.length ? Math.round(rtValues.reduce((s, v) => s + v, 0) / rtValues.length) : null;
 
@@ -275,77 +366,21 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
     <div className="client-dashboard">
 
       {/* ── Stat cards ── */}
-      <div className="stat-grid">
+      <div className="card analytics-card" style={{ marginBottom: 14 }}>
+        
+      <div className="stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
         <StatCard label="Avg messages / session" value={data.avg_messages_per_session} sub="per conversation" />
         <StatCard label="Pending tickets" value={data.pending_tickets} accent={data.pending_tickets > 0 ? "#f59e0b" : undefined} sub="human interventions" />
         <StatCard label="Success rate" value={`${data.success_rate}%`} accent="#22c55e" />
-        <StatCard
+        {/* <StatCard
           label="Avg response time"
           value={avgRt !== null ? `${avgRt} ms` : "—"}
           accent={avgRt === null ? undefined : avgRt > 2500 ? "#D85A30" : avgRt > 1500 ? "#BA7517" : "#1D9E75"}
           sub="across selected period"
-        />
+        /> */}
       </div>
-
-      {/* ── Messages chart ── */}
-      <div className="card analytics-card" style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-          <h3 className="card-title" style={{ margin: 0 }}>Messages over time</h3>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <PeriodPills options={["week", "month", "year"]} value={msgPeriod} onChange={p => { setMsgPeriod(p); setMsgOffset(0); }} />
-            <PeriodNav label={periodLabel(msgPeriod, msgOffset)} offset={msgOffset} onPrev={() => setMsgOffset(o => o - 1)} onNext={() => setMsgOffset(o => Math.min(0, o + 1))} />
-          </div>
-        </div>
-        <ResponsiveContainer width="100%" height={190}>
-          <AreaChart data={msgChartData} margin={{ left: -10, right: 4 }}>
-            <defs>
-              <linearGradient id="gMsg" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#7F77DD" stopOpacity={0.25} />
-                <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text3)" }} interval={msgPeriod === "month" ? 4 : 0} />
-            <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={28} />
-            <Tooltip content={<MsgTooltip />} />
-            <Area type="monotone" dataKey="messages" stroke="#7F77DD" fill="url(#gMsg)" strokeWidth={2} dot={msgPeriod === "week"} />
-          </AreaChart>
-        </ResponsiveContainer>
       </div>
-
-      {/* ── Response time chart ── */}
-      <div className="card analytics-card" style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-          <h3 className="card-title" style={{ margin: 0 }}>
-            Avg response time
-            {avgRt !== null && (
-              <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 10, color: "var(--text3)" }}>
-                {avgRt} ms avg for period
-              </span>
-            )}
-          </h3>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <PeriodPills options={["week", "month"]} value={rtPeriod} onChange={p => { setRtPeriod(p); setRtOffset(0); }} />
-            <PeriodNav label={periodLabel(rtPeriod, rtOffset)} offset={rtOffset} onPrev={() => setRtOffset(o => o - 1)} onNext={() => setRtOffset(o => Math.min(0, o + 1))} />
-          </div>
-        </div>
-
-        {rtValues.length === 0 ? (
-          <div style={{ height: 170, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 13 }}>
-            No response time data yet — data is recorded as users chat with your widget.
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={170}>
-            <BarChart data={rtChartData} margin={{ left: -10, right: 4 }}>
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text3)" }} interval={rtPeriod === "month" ? 4 : 0} />
-              <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={36} />
-              <Tooltip content={<RtTooltip />} />
-              <Bar dataKey="avg_ms" fill="#1D9E75" radius={[3, 3, 0, 0]} maxBarSize={32} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ── Plan & quota — REAL DATA ── */}
+      {/* ── Plan & quota ── */}
       <div className="card analytics-card" style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <h3 className="card-title" style={{ margin: 0 }}>Plan &amp; quota</h3>
@@ -354,11 +389,10 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
           <QuotaBar label="Messages this month" used={q.messages_used}    total={q.messages_limit}     color="#7F77DD" />
           <QuotaBar label="Documents indexed"   used={q.docs_used}        total={q.docs_limit}         color="#BA7517" />
           <QuotaBar label="Storage"             used={+(q.storage_mb / 1024).toFixed(2)} total={+(q.storage_limit_mb / 1024).toFixed(0)} unit=" GB" color="#1D9E75" />
-          <QuotaBar label="API keys"            used={q.api_keys_used}    total={q.api_keys_limit}     color="#378ADD" />
         </div>
       </div>
 
-      {/* ── Document usage — REAL DATA ── */}
+      {/* ── Document usage ── */}
       {docUsage.length > 0 && (
         <div className="card analytics-card" style={{ marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -429,14 +463,54 @@ const ClientDashboard: React.FC<Props> = ({ bot }) => {
         )}
       </div>
 
-      {/* ── Bot info ── */}
+      {/* ── Messages chart ── */}
+      <div className="card analytics-card" style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Messages over time</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <PeriodPills options={["week", "month", "year"]} value={msgPeriod} onChange={p => { setMsgPeriod(p); setMsgOffset(0); }} />
+            <PeriodNav label={periodLabel(msgPeriod, msgOffset)} offset={msgOffset} onPrev={() => setMsgOffset(o => o - 1)} onNext={() => setMsgOffset(o => Math.min(0, o + 1))} />
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={190}>
+          <AreaChart data={msgChartData} margin={{ left: -10, right: 4 }}>
+            <defs>
+              <linearGradient id="gMsg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#7F77DD" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text3)" }} interval={msgPeriod === "month" ? 4 : 0} />
+            <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={28} />
+            <Tooltip content={<MsgTooltip />} />
+            <Area type="monotone" dataKey="messages" stroke="#7F77DD" fill="url(#gMsg)" strokeWidth={2} dot={msgPeriod === "week"} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      
+
+      
+
+      {/* ── Bot info + memory management ── */}
       <div className="cl-section">
         <h2 className="cl-section-title">Your bot</h2>
         <div className="cl-info-card">
-          <div className="cl-info-row"><span className="cl-info-label">Bot name</span><span className="cl-info-value">{bot?.name ?? "—"}</span></div>
-          <div className="cl-info-row"><span className="cl-info-label">Bot ID</span><span className="cl-info-value cl-mono">{bot?.id ?? "—"}</span></div>
+          <div className="cl-info-row">
+            <span className="cl-info-label">Bot name</span>
+            <span className="cl-info-value">{bot?.name ?? "—"}</span>
+          </div>
+          <div className="cl-info-row">
+            <span className="cl-info-label">Bot ID</span>
+            <span className="cl-info-value cl-mono">{bot?.id ?? "—"}</span>
+          </div>
+          <div className="cl-info-row">
+            <span className="cl-info-label">Conversation memory</span>
+            <ClearMemoryButton botId={bot.id} />
+          </div>
         </div>
       </div>
+
     </div>
   );
 };

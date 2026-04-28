@@ -38,6 +38,39 @@ def _gen_ticket_id() -> str:
     return f"tkt_{suffix}"
 
 
+def _fetch_chat_history(bot_id: str, session_id: str) -> list:
+    """
+    Fetch the conversation messages for the given session from widget_messages.
+    Returns a list of {"role": "user"|"assistant", "content": str, "created_at": str}
+    ordered oldest → newest, capped at the last 50 exchanges (100 docs).
+    """
+    try:
+        raw = list(
+            mongodb["widget_messages"]
+            .find(
+                {"bot_id": bot_id, "session_id": session_id},
+                {"_id": 0, "question": 1, "answer": 1, "created_at": 1},
+            )
+            .sort("created_at", 1)
+            .limit(100)
+        )
+
+        history = []
+        for msg in raw:
+            created = msg.get("created_at")
+            ts = created.isoformat() if hasattr(created, "isoformat") else str(created)
+
+            if msg.get("question"):
+                history.append({"role": "user",      "content": msg["question"], "created_at": ts})
+            if msg.get("answer"):
+                history.append({"role": "assistant", "content": msg["answer"],   "created_at": ts})
+
+        return history
+    except Exception as exc:
+        print(f"[INTERVENTION] Could not fetch chat history: {exc}")
+        return []
+
+
 # ── schemas ───────────────────────────────────────────────────────────────────
 
 class InterventionRequestBody(BaseModel):
@@ -63,7 +96,8 @@ async def request_intervention(
 ):
     """
     Called by the widget when the chatbot can't answer.
-    Saves a ticket and emails a verification code to the user.
+    Saves a ticket (including full chat history snapshot) and emails a
+    verification code to the user.
     """
     client = db.query(UserModel).filter_by(id=bot.owner_id).first()
     if not client:
@@ -71,6 +105,10 @@ async def request_intervention(
 
     code      = _gen_code()
     ticket_id = _gen_ticket_id()
+
+    # Snapshot the conversation that led to this intervention so the client
+    # has full context in the ticket detail view (not sent in the email).
+    chat_history = _fetch_chat_history(bot.id, body.session_id)
 
     mongodb["intervention_tickets"].insert_one({
         "ticket_id":          ticket_id,
@@ -85,6 +123,7 @@ async def request_intervention(
         "verified":           False,
         "status":             "pending_verification",   # pending_verification | pending_response | answered
         "answer":             None,
+        "chat_history":       chat_history,             # ← conversation snapshot
         "created_at":         datetime.utcnow().isoformat(),
         "answered_at":        None,
     })
@@ -94,7 +133,7 @@ async def request_intervention(
     except Exception as e:
         print(f"[INTERVENTION] Error sending verification code: {str(e)}")
         # Don't fail the request if email fails, just log it
-    
+
     return {"ticket_id": ticket_id, "message": "Verification code sent"}
 
 
@@ -121,6 +160,7 @@ async def verify_intervention(body: VerifyBody):
         {"$set": {"verified": True, "status": "pending_response"}},
     )
 
+    # Email does NOT include chat history — context lives in the portal only.
     send_intervention_request_to_client(
         ticket["client_email"],
         ticket["question"],
@@ -129,6 +169,21 @@ async def verify_intervention(body: VerifyBody):
     )
 
     return {"message": "Email verified. The support team has been notified."}
+
+
+def _hydrate_history(ticket: dict) -> dict:
+    """
+    If the ticket was created before chat_history snapshotting was added,
+    attempt a live lookup from widget_messages using the stored session_id.
+    Mutates and returns the ticket dict.
+    """
+    if ticket.get("chat_history") is None:
+        history = _fetch_chat_history(
+            ticket.get("bot_id", ""),
+            ticket.get("session_id", ""),
+        )
+        ticket["chat_history"] = history
+    return ticket
 
 
 @router.get("/widgets/tickets")
@@ -145,6 +200,8 @@ async def list_tickets(
         .sort("created_at", -1)
         .limit(100)
     )
+    # Backfill history for any ticket that pre-dates the snapshot feature
+    tickets = [_hydrate_history(t) for t in tickets]
     return {"tickets": tickets}
 
 
@@ -158,6 +215,8 @@ async def get_ticket(
     )
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    # Backfill history for tickets that pre-date the snapshot feature
+    ticket = _hydrate_history(ticket)
     return ticket
 
 

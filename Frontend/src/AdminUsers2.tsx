@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import * as api from "./api";
 
 interface UserRow {
   id: number;
@@ -25,6 +26,8 @@ export default function AdminUsers2({ onViewBot }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [docCountsByBotId, setDocCountsByBotId] = useState<Record<string, number>>({});
+
 
   const token = () => localStorage.getItem("admin_token");
 
@@ -37,6 +40,22 @@ export default function AdminUsers2({ onViewBot }: Props) {
       if (!res.ok) throw new Error("Failed to fetch users");
       const data = await res.json();
       setUsers(data);
+
+      // Get real document counts per bot (docs are keyed by user_id === bot.id).
+      try {
+        const docsData = await api.getAdminDocuments();
+        const documents = docsData?.documents || [];
+        const counts: Record<string, number> = {};
+        for (const d of documents) {
+          const botId = d?.user_id != null ? String(d.user_id) : null;
+          if (!botId) continue;
+          counts[botId] = (counts[botId] || 0) + 1;
+        }
+        setDocCountsByBotId(counts);
+      } catch {
+        // Optional: keep doc counts from user payload if this fails.
+        setDocCountsByBotId({});
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -51,6 +70,18 @@ export default function AdminUsers2({ onViewBot }: Props) {
       headers: { Authorization: `Bearer ${token()}` },
     });
     setUsers(u => u.filter(x => x.id !== userId));
+  };
+
+  const handleViewBot = async (botSummary: NonNullable<UserRow["bot"]>) => {
+    // When coming from users list, we only have a minimal bot object.
+    // Enrich it from /admin/bots so the dashboard can show owner details.
+    try {
+      const data = await api.getAdminBots();
+      const full = (data?.bots || []).find((b: any) => String(b.id) === String(botSummary.id));
+      onViewBot(full || botSummary);
+    } catch {
+      onViewBot(botSummary);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -104,7 +135,7 @@ export default function AdminUsers2({ onViewBot }: Props) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--bg2)" }}>
-                {["User", "Status", "Sessions", "Bot", "Bot activity", "Joined", "Actions"].map(h => (
+                {["User", "Status", "Bot", "Bot activity", "Joined", "Actions"].map(h => (
                   <th key={h} style={{
                     padding: "10px 14px", textAlign: "left",
                     fontWeight: 600, color: "var(--text3)",
@@ -162,18 +193,13 @@ export default function AdminUsers2({ onViewBot }: Props) {
                     </span>
                   </td>
 
-                  {/* sessions */}
-                  <td style={{ padding: "12px 14px", color: "var(--text2)" }}>
-                    {u.session_count}
-                  </td>
-
                   {/* bot name */}
                   <td style={{ padding: "12px 14px" }}>
                     {u.bot ? (
                       <div>
                         <div style={{ fontWeight: 500, color: "var(--text)" }}>{u.bot.name}</div>
                         <div style={{ fontSize: 11, color: "var(--text3)" }}>
-                          {u.bot.doc_count} docs
+                          {(docCountsByBotId[String(u.bot.id)] ?? u.bot.doc_count ?? 0)} docs
                         </div>
                       </div>
                     ) : (
@@ -206,7 +232,7 @@ export default function AdminUsers2({ onViewBot }: Props) {
                     <div style={{ display: "flex", gap: 6 }}>
                       {u.bot && (
                         <button
-                          onClick={() => onViewBot(u.bot)}
+                          onClick={() => void handleViewBot(u.bot!)}
                           style={{
                             background: "var(--accent)", border: "none",
                             borderRadius: 6, color: "white",

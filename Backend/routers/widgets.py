@@ -712,3 +712,54 @@ async def get_advanced_analytics(
     except Exception as e:
         logger.error("Advanced analytics error: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Analytics error: {str(e)}")
+
+import os
+import shutil
+ 
+@router.delete("/bots/{bot_id}/memory")
+def clear_bot_memory(
+    bot_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete all FAISS conversation-memory indexes for every active session
+    belonging to this bot. The document index (bot_{bot_id}) is untouched.
+    """
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+ 
+    # This points to the project root assuming admin.py is in /app/routers/
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    vector_root = os.path.join(BASE_DIR, "vector_store", f"user_{bot_id}")
+    
+    deleted = []
+    errors = []
+
+    # 2. Use the try-block for safer directory scanning
+    try:
+        if not os.path.isdir(vector_root):
+            return {"ok": True, "deleted": [], "message": "No memory found."}
+
+        with os.scandir(vector_root) as it:
+            for entry in it:
+                # Skip document index, only remove session memory
+                if entry.is_dir() and entry.name.endswith("_memory"):
+                    try:
+                        shutil.rmtree(entry.path)
+                        deleted.append(entry.name)
+                    except Exception as e:
+                        errors.append({"folder": entry.name, "error": str(e)})
+
+    except FileNotFoundError:
+        return {"ok": True, "deleted": [], "message": "No memory folder exists for this bot."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OS Error: {str(e)}")
+
+    return {
+        "ok": len(errors) == 0,
+        "deleted": deleted,
+        "errors": errors,
+        "message": f"Cleared {len(deleted)} memory session(s).",
+    }

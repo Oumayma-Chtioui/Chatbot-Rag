@@ -15,26 +15,69 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// ── Overview ─────────────────────────────────────────────────────────────────
+// ── Overview ──────────────────────────────────────────────────────────────────
 
 export interface AdminOverviewData {
+  // Users
   total_users: number;
   new_users_this_month: number;
 
+  // Bots
   total_bots: number;
 
+  // Messages
   total_messages: number;
   messages_this_month: number;
+  messages_change_pct?: number;       // NEW — % change vs previous 30 days
 
+  // Sessions
+  total_sessions?: number;            // NEW — for avg msgs/session calc
+
+  // Revenue
   mrr: number;
   arr: number;
   revenue_this_month: number;
   revenue_last_month: number;
   revenue_change_pct: number;
 
+  // NEW — Revenue + user growth curve (30 days)
+  revenue_per_day?: {
+    date: string;       // "YYYY-MM-DD"
+    revenue: number;    // revenue earned that day
+    new_users: number;  // signups that day
+  }[];
+
+  // NEW — User growth evolution badges
+  user_change_ww?:  number;   // week-over-week % change
+  user_change_mom?: number;   // month-over-month % change
+  user_change_yoy?: number;   // year-over-year % change
+
+  // NEW — Avg response time across all bots (ms)
+  avg_response_ms?: number;
+
+  // NEW — Response time sparkline (30 days)
+  response_time_per_day?: {
+    date: string;
+    avg_ms: number;
+  }[];
+
+  // NEW — Token / credit consumption
+  tokens_used_this_month?:  number;
+  tokens_quota_this_month?: number;
+
+  // NEW — Document type breakdown
+  doc_types?: { type: string; count: number }[];
+
+  // Legacy fallback (still returned by /admin/overview, used as timeline proxy)
+  messages_per_day?: { date: string; count: number; new_users?: number }[];
+
+  // Plans
   plan_breakdown: { plan: string; count: number; revenue: number }[];
 
+  // Clients
   top_clients: TopClient[];
+
+  // Activity
   activity_feed: ActivityItem[];
 }
 
@@ -103,7 +146,7 @@ export interface BotRow {
 export const getAdminBots = (): Promise<{ bots: BotRow[] }> =>
   req("/admin/bots");
 
-// ── System (✅ FIXED) ─────────────────────────────────────────────────────────
+// ── System ────────────────────────────────────────────────────────────────────
 
 export interface SystemInfo {
   cpu_pct: number;
@@ -112,7 +155,6 @@ export interface SystemInfo {
 
   mongo_collections: { name: string; size_mb: number; count: number }[];
 
-  // ✅ NEW STRUCTURE (matches your UI)
   faiss: {
     total_indexes: number;
     user_breakdown: Record<string, number>;
@@ -126,7 +168,7 @@ export interface SystemInfo {
 export const getSystemInfo = (): Promise<SystemInfo> =>
   req("/admin/system");
 
-// ── Feedback ─────────────────────────────────────────────────────────────────
+// ── Feedback ──────────────────────────────────────────────────────────────────
 
 export interface FeedbackRow {
   id: string;

@@ -27,20 +27,23 @@ export default function AdminTestBot({ bots, selectedBot, onBotSelect, loading }
   };
 
   // Only generate a preview key when the user explicitly clicks the button
+  // AdminTestBot.tsx
   const handleLoadPreview = async () => {
-    if (!selectedBot) return;
-    setPreviewLoading(true);
-    setPreviewError(null);
-    setPreviewKey(null);
-    try {
-      const data = await getAdminPreviewKey(selectedBot);
-      setPreviewKey(data.key);
-    } catch (err: any) {
-      setPreviewError(err.message || "Unable to create preview key.");
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
+      if (!selectedBot) return;
+      setPreviewLoading(true);
+      setPreviewError(null);
+      setPreviewKey(null);
+      try {
+        const data = await getAdminPreviewKey(selectedBot);
+        setPreviewKey(data.key);
+      } catch (err: any) {
+        // Parse the detail message from FastAPI's HTTPException
+        const message = err?.detail || err?.message || "Unable to create preview key.";
+        setPreviewError(message);
+      } finally {
+        setPreviewLoading(false);
+      }
+    };
 
   if (loading) return <div className="cl-loading">Loading bots…</div>;
 

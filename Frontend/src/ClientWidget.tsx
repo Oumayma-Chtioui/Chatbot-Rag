@@ -23,6 +23,7 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [origin, setOrigin] = useState(bot?.allowed_origin || "");
+  useEffect(() => { setOrigin(bot?.allowed_origin || ""); }, [bot?.allowed_origin]);
   const [apiBase, setApiBase] = useState("http://localhost:8000");
   const [generating, setGenerating] = useState(false);
 
@@ -36,6 +37,7 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
   };
 
   useEffect(() => { loadKeys(); }, [bot]);
+  
 
   const handleGenerate = async () => {
     if (!bot) return;
@@ -67,7 +69,9 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
       body: JSON.stringify({ allowed_origin: origin || null }),
     });
     const updated = await res.json();
-    setBot({ ...bot, allowed_origin: updated.allowed_origin });
+    const updatedBot = { ...bot, allowed_origin: updated.allowed_origin };
+    setBot(updatedBot);
+    localStorage.setItem("client_bot", JSON.stringify(updatedBot)); // ADD THIS
   };
 
   const embedCode = newKey

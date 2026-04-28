@@ -1,6 +1,7 @@
 import logging
 import uuid
 import time
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -36,7 +37,7 @@ STOP_WORDS = {
     "leur","leurs","quel","quelle","quels","quelles","entre","sans","après",
     "avant","depuis","pendant","lors","selon","chez","vers","contre","malgré",
 }
- 
+
 NO_ANSWER_PHRASES = [
     # English
     "i don't have information", "i couldn't find", "not found in the documents",
@@ -58,19 +59,15 @@ def extract_keywords(text: str) -> list:
     """Return up to 10 meaningful words from the question."""
     words = re.findall(r"\b[a-zA-ZÀ-ÿ]{3,}\b", text.lower())
     return [w for w in words if w not in STOP_WORDS][:10]
- 
- 
+
+
 def is_question_answered(answer: str) -> bool:
     """Return False if the answer signals the bot couldn't find relevant info."""
     lower = answer.lower()
     return not any(phrase in lower for phrase in NO_ANSWER_PHRASES)
- 
+
 
 def get_api_key_or_ip(request: Request) -> str:
-    """
-    Rate limit key: use the API key if present, fall back to IP.
-    This means each API key gets its own 30/min bucket — not shared across keys.
-    """
     return request.headers.get("X-Api-Key") or get_remote_address(request)
 
 
@@ -92,75 +89,62 @@ async def widget_chat(
     # CORS origin check
     if bot.allowed_origin:
         origin = request.headers.get("origin", "")
-        logging.debug(f"Bot allowed_origin: {bot.allowed_origin}, Request origin: {origin}")
-        print(f"DEBUG: Bot allowed_origin: {bot.allowed_origin}, Request origin: {origin}")
         if origin and bot.allowed_origin not in origin:
             raise HTTPException(
                 status_code=403,
                 detail=f"Origin {origin} not allowed for this widget"
             )
 
-    # ── Session IDs ────────────────────────────────────────────────────────────
-    # doc_session_id  → always points to the bot's FAISS document index (shared)
-    # chat_session_id → unique per end-user conversation (isolated memory)
     doc_session_id  = f"bot_{bot.id}"
     chat_session_id = req.session_id or f"widget_{uuid.uuid4()}"
 
-     # ── Time the RAG call ──────────────────────────────────────────────────────
     t_start = time.monotonic()
 
     try:
         result = generate_answer(
             question=req.message,
             user_id=bot.id,
-            session_id=doc_session_id,          # FAISS document lookup
-            memory_session_id=chat_session_id,  # per-user conversation memory
-            
+            session_id=doc_session_id,
+            memory_session_id=chat_session_id,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
     response_time_ms = int((time.monotonic() - t_start) * 1000)
 
-    answered = is_question_answered(result.get("answer", ""))
+    answer   = result.get("answer", "")
+    answered = is_question_answered(answer)
     keywords = extract_keywords(req.message)
 
-    # ── Extract source document names from RAG result ──────────────────────────
-    # sources is a list of dicts like {"source": "doc_name.pdf", "content_preview": "..."}
-    sources = result.get("sources", [])
+    sources      = result.get("sources", [])
     source_names = []
     for s in sources:
-        if isinstance(s, dict):
-            name = s.get("source", "")
-        else:
-            name = str(s)
-        # Store only the filename portion (strip paths)
+        name = s.get("source", "") if isinstance(s, dict) else str(s)
         if name:
             source_names.append(name.split("/")[-1])
 
-    # Save to MongoDB for analytics
+    # ── Analytics write — no answer text stored ────────────────────────────────
     if mongodb is not None:
         try:
-            answered = is_question_answered(result.get("answer", ""))
-            keywords = extract_keywords(req.message)
-            
             mongodb["widget_messages"].insert_one({
-                "bot_id":     bot.id,
-                "session_id": chat_session_id,
-                "question":   req.message,
-                "answer":     result.get("answer", ""),
-                "answered":   answered,      
-                "keywords":   keywords,      
-                "response_time_ms": response_time_ms,  # store response time
-                "sources":    source_names,   # store extracted source names
-                "created_at": datetime.utcnow(),
+                "bot_id":           bot.id,
+                "session_id":       chat_session_id,
+                "question":         req.message,   # kept for keywords + unanswered list
+                # "answer" field removed — not needed for any dashboard metric
+                "answered":         answered,
+                "keywords":         keywords,
+                "response_time_ms": response_time_ms,
+                "sources":          source_names,
+                "created_at":       datetime.utcnow(),
             })
         except Exception:
             pass  # never let analytics failure break the response
 
     return {
-        "answer": result.get("answer", ""),
-        "sources": result.get("sources", []),
+        "answer":     answer,
+        "sources":    sources,
         "session_id": chat_session_id,
-        "answered": answered, 
+        "answered":   answered,
     }
+
+    

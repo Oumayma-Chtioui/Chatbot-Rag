@@ -1,3 +1,4 @@
+
 (function () {
   const CONFIG   = window.NovaMindConfig || {};
   const API_KEY  = CONFIG.apiKey   || "";

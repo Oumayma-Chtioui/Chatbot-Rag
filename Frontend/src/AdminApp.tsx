@@ -49,10 +49,19 @@ export default function AdminApp() {
   const [billing, setBilling]   = useState<BillingRow[]>([]);
   const [system, setSystem]     = useState<any>(null);
   const [selectedBot, setSelectedBot]       = useState<string>("");
-  const [selectedChatbot, setSelectedChatbot] = useState<any>(null);
+  const [selectedChatbot, setSelectedChatbot] = useState<any>(() => {
+    try { return JSON.parse(localStorage.getItem("admin_selected_chatbot") || "null"); }
+    catch { return null; }
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const selectChatbot = (bot: any) => {
+    setSelectedChatbot(bot);
+    if (bot) localStorage.setItem("admin_selected_chatbot", JSON.stringify(bot));
+    else localStorage.removeItem("admin_selected_chatbot");
+  };
 
   useEffect(() => {
     if (!authenticated) return;
@@ -207,10 +216,10 @@ export default function AdminApp() {
           {error && <div className="cl-error">{error}</div>}
 
           {tab === "overview" && <AdminOverview stats={stats} loading={loading} />}
-          {tab === "users" && (<AdminUsers2 onViewBot={(bot) => { setTab("chatbots"); setSelectedChatbot(bot);}}/>)}
+          {tab === "users" && (<AdminUsers2 onViewBot={(bot) => { setTab("chatbots"); selectChatbot(bot);}}/>)}
           {tab === "chatbots" && (selectedChatbot
-            ? <AdminBotDashboard bot={selectedChatbot} onBack={() => setSelectedChatbot(null)} />
-            : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={setSelectedChatbot} />
+            ? <AdminBotDashboard bot={selectedChatbot} onBack={() => selectChatbot(null)} />
+            : <AdminChatbots bots={bots} loading={loading} onDelete={handleDeleteBot} onSelect={selectChatbot} />
           )}
           {tab === "feedback" && <AdminFeedback feedback={feedback} loading={loading} />}
           {tab === "billing"  && <AdminBilling  billing={billing}   loading={loading} />}

@@ -48,6 +48,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 999px; }
 
+/* ── Animations ── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .auth-page { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; position: relative; overflow: hidden; }
 .auth-left { padding: 60px; display: flex; flex-direction: column; justify-content: space-between; position: relative; z-index: 1; }
 .auth-right { background: var(--surface); display: flex; align-items: center; justify-content: center; padding: 60px; position: relative; overflow: hidden; }

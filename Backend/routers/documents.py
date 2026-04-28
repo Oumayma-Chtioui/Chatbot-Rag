@@ -44,100 +44,65 @@ def get_documents(session_id: Optional[str] = None,current_user: UserModel = Dep
     }
 
 
+from tasks.ingest_tasks import ingest_document_task
+
 @router.post("/documents/upload")
-async def upload_document(file: UploadFile = File(...), session_id: Optional[str] = None, current_user: UserModel = Depends(get_current_user)):
-    logger.info(f"📤 Uploading file: {file.filename} for user: {current_user.id}")
-    if session_id:
-        logger.info(f"📎 Assigning to session: {session_id}")
-    # Create unique document ID
+async def upload_document(
+    file: UploadFile = File(...),
+    session_id: Optional[str] = None,
+    current_user: UserModel = Depends(get_current_user)
+):
     doc_id = str(uuid.uuid4())
-    
-    # Ensure upload directory exists
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Save file temporarily
+
     file_extension = os.path.splitext(file.filename)[1]
-    temp_filename = f"temp_{doc_id}{file_extension}"
-    temp_path = os.path.join(UPLOAD_DIR, temp_filename)
-    
-    ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
-    if file_extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported file type '{file_extension}'. Allowed: .pdf, .txt, .md, .docx"
-        )
+    if file_extension not in {".pdf", ".txt", ".md", ".docx"}:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type '{file_extension}'")
 
-    # Validate file size (50MB max)
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail="File too large. Maximum allowed size is 50MB."
-        )
-    await file.seek(0)
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 50MB.")
 
-    try:
-        # Save the uploaded file
-        
-        with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        logger.info(f"✅ File saved to: {temp_path}")
-        # Get file size
-        file_size = os.path.getsize(temp_path)
+    # Save file — worker reads it from this path
+    temp_path = os.path.join(UPLOAD_DIR, f"temp_{doc_id}{file_extension}")
+    with open(temp_path, "wb") as f:
+        f.write(contents)
 
-        # Process document (create embeddings, etc.)
-        logger.info("🔄 Processing document...")
-        if not session_id:
-            session_id = f"session_{uuid.uuid4()}"
-            logger.info(f"🆕 No session_id provided, generated: {session_id}")
+    if not session_id:
+        session_id = f"session_{uuid.uuid4()}"
 
-        process_result = await load_document(
-            file,
-            file_path=temp_path,
-            user_id=current_user.id,
-            session_id=session_id or "default",
-            max_pages=0,
-            doc_id=doc_id
-        )
+    # Save a "processing" record to MongoDB immediately
+    doc_record = {
+        "id": doc_id,
+        "user_id": current_user.id,
+        "name": file.filename,
+        "type": file_extension[1:],
+        "size": f"{len(contents) / 1024:.1f} KB",
+        "path": temp_path,
+        "status": "processing",   # ← not "indexed" yet
+        "chunks": 0,
+        "created_at": datetime.utcnow().isoformat(),
+        "session_id": session_id
+    }
+    documents_collection.insert_one(doc_record)
 
-        
-        
-        # Create document record for MongoDB
-        doc_record = {
-            "id": doc_id,
-            "user_id": current_user.id,
-            "name": file.filename,
-            "type": file_extension[1:] if file_extension else "unknown",
-            "size": f"{file_size / 1024:.1f} KB",
-            "path": temp_path,
-            "status": "indexed" if process_result.get("success") else "failed",
-            "chunks": process_result.get("chunks", 0),
-            "created_at": datetime.utcnow().isoformat(),
-            "session_id": session_id
-        }
-        
-        # Save to MongoDB
-        result = documents_collection.insert_one(doc_record)
-        logger.info(f"✅ Saved to MongoDB with ID: {result.inserted_id}")
-        logger.info(f"✅ Document record: {doc_record}")
-        
-        return {
-            "message": "Document processed and indexed successfully",
-            "document": {
-                "id": doc_id,
-                "name": file.filename,
-                "chunks": process_result.get("chunks", 0),
-                "session_id": session_id
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Upload failed: {e}")
-        # Clean up temp file if it exists
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=str(e))
+    # Dispatch to Celery — does NOT block
+    task = ingest_document_task.delay(
+        file_path=temp_path,
+        filename=file.filename,
+        user_id=current_user.id,
+        session_id=session_id,
+        max_pages=0,
+        doc_id=doc_id,
+    )
+
+    return {
+        "task_id": task.id,
+        "doc_id": doc_id,
+        "session_id": session_id,
+        "status": "processing"
+        # client polls GET /task/{task_id}/status to know when it's done
+    }
     
 @router.post("/documents/assign-session")
 def assign_documents_to_session(
@@ -195,6 +160,8 @@ def assign_documents_to_session(
         "updated_count": updated_count
     }
 
+from tasks.ingest_tasks import ingest_url_task  # new task, see below
+
 @router.post("/documents/url")
 async def add_url_document(
     req: UrlDocRequest,
@@ -205,51 +172,37 @@ async def add_url_document(
 
     if not session_id:
         session_id = f"session_{uuid.uuid4()}"
-        logger.info(f"🆕 No session_id provided, generated: {session_id}")
 
-    logger.info(f"🔗 Processing URL: {req.url}")
+    # Save "processing" record immediately
+    doc_record = {
+        "id": doc_id,
+        "user_id": current_user.id,
+        "session_id": session_id,
+        "name": req.url,
+        "type": "url",
+        "size": "Web page",
+        "path": req.url,
+        "status": "processing",
+        "chunks": 0,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    documents_collection.insert_one({**doc_record, "_id": doc_id})
 
-    try:
-        process_result = await load_url(
-            file=None,
-            file_path=req.url,
-            user_id=current_user.id,
-            session_id=session_id,
-            max_pages=req.max_pages,
-            doc_id=doc_id
-        )
-        if process_result.get("success"):
-            doc = {
-                "id": doc_id,
-                "user_id": current_user.id,
-                "session_id": session_id,
-                "name": req.url,
-                "type": "url",
-                "size": "Web page",
-                "path": req.url,
-                "status": "indexed" if process_result.get("success") else "failed",
-                "chunks": process_result.get("chunks", 0),
-                "created_at": datetime.utcnow().isoformat(),
-            }
+    task = ingest_url_task.delay(
+        url=req.url,
+        user_id=current_user.id,
+        session_id=session_id,
+        max_pages=req.max_pages,
+        doc_id=doc_id,
+    )
 
-            documents_collection.insert_one({**doc, "_id": doc_id})
-            logger.info(f"✅ URL document indexed: {req.url}")
+    return {
+        "task_id": task.id,
+        "doc_id": doc_id,
+        "session_id": session_id,
+        "status": "processing"
+    }
 
-            return {
-                "document": {
-                    "id": doc_id,
-                    "name": req.url,
-                    "type": "url",
-                    "size": "Web page",
-                    "status": doc["status"],
-                    "chunks": process_result.get("chunks", 0),
-                    "session_id": session_id,
-                }
-        }
-
-    except Exception as e:
-        logger.error(f"❌ URL processing failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str, current_user: UserModel = Depends(get_current_user)):
     doc = documents_collection.find_one({"id": doc_id, "user_id": current_user.id})
@@ -315,5 +268,45 @@ def cancel_document_processing(doc_id: str, current_user: UserModel = Depends(ge
     logger.info(f"🛑 Cancellation requested for doc: {doc_id}")
     return {"ok": True, "cancelled": doc_id}
 
+from celery.result import AsyncResult
 
+@router.get("/documents/{doc_id}/status")
+def get_document_status(
+    doc_id: str,
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    Polls MongoDB for the document's current processing status.
+    Frontend calls this after upload until status != 'processing'.
+    """
+    doc = documents_collection.find_one(
+        {"id": doc_id, "user_id": current_user.id},
+        {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
 
+    return {
+        "doc_id": doc_id,
+        "status": doc.get("status"),   # "processing" | "indexed" | "failed"
+        "chunks": doc.get("chunks", 0),
+        "error": doc.get("error")
+    }
+
+@router.get("/task/{task_id}/status")
+async def get_task_status(task_id: str):
+    result = AsyncResult(task_id)
+    if result.state == "PENDING":
+        return {"state": "PENDING", "status": "Waiting in queue..."}
+    elif result.state == "STARTED":
+        return {"state": "STARTED", "status": result.info.get("status", "Processing...")}
+    elif result.state == "SUCCESS":
+        return {"state": "SUCCESS", "result": result.result}
+    elif result.state == "FAILURE":
+        return {"state": "FAILURE", "error": str(result.info)}
+    return {"state": result.state}
+
+@router.post("/chat")
+async def chat(user_id: int, session_id: str, question: str):
+    task = run_rag_query_task.delay(user_id, session_id, question)
+    return {"task_id": task.id, "status": "queued"}

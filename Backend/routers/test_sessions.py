@@ -14,7 +14,7 @@ Endpoints:
 
 import uuid
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +25,8 @@ from database import get_db, mongodb
 from models.widget import WidgetBot
 from models.user import UserModel
 from auth.helpers import get_current_user
+from datetime import timezone
+
 
 router = APIRouter()
 
@@ -45,7 +47,13 @@ def _is_active(session: dict) -> bool:
     expires_at = session.get("expires_at")
     if expires_at is None:
         return True   # forever
-    return datetime.utcnow() < datetime.fromisoformat(expires_at)
+    try:
+        dt = datetime.fromisoformat(expires_at)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)  # strip tz, treat as UTC
+        return datetime.utcnow() < dt
+    except (ValueError, TypeError):
+        return False
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -67,8 +75,7 @@ def create_test_session(
 
     expires_at: Optional[str] = None
     if req.duration_minutes > 0:
-        expires_at = (datetime.utcnow() + timedelta(minutes=req.duration_minutes)).isoformat()
-
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=req.duration_minutes)).isoformat()
     duration_label = "Forever"
     if req.duration_minutes == 30:
         duration_label = "30 min"
@@ -92,7 +99,7 @@ def create_test_session(
         "access_token":    access_token,
         "duration_minutes": req.duration_minutes,
         "duration_label":  duration_label,
-        "granted_at":      datetime.utcnow().isoformat(),
+        "granted_at": datetime.now(timezone.utc).isoformat(),
         "expires_at":      expires_at,
         "is_active":       True,
     }

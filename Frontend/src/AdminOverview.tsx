@@ -1,73 +1,27 @@
 import React, { useState } from "react";
-import { PieChart, Pie, Cell } from "recharts";
-import { AdminOverviewData, TopClient, ActivityItem } from "./Adminapi";
+import {
+  ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend, LineChart, Line,
+} from "recharts";
+import { AdminOverviewData, TopClient } from "./Adminapi";
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Palette
+// ─────────────────────────────────────────────────────────────────────────────
 
-const Metric: React.FC<{
-  label: string;
-  value: string | number;
-  sub?: string;
-  accent?: string;
-  chip?: { label: string; positive: boolean };
-}> = ({ label, value, sub, accent, chip }) => (
-  <div className="admin-metric">
-    <p className="admin-metric__label">{label}</p>
-    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-      <p className="admin-metric__value" style={accent ? { color: accent } : undefined}>
-        {value}
-      </p>
-      {chip && (
-        <span style={{
-          fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-          background: chip.positive ? "rgba(29,158,117,0.12)" : "rgba(216,90,48,0.12)",
-          color: chip.positive ? "#0F6E56" : "#993C1D",
-        }}>
-          {chip.label}
-        </span>
-      )}
-    </div>
-    {sub && <p className="admin-metric__sub">{sub}</p>}
-  </div>
-);
-
-// ── Plan pie ──────────────────────────────────────────────────────────────────
+const C = {
+  purple:  "#7F77DD",
+  green:   "#1D9E75",
+  amber:   "#BA7517",
+  red:     "#D85A30",
+  grey:    "#888780",
+  green12: "rgba(29,158,117,0.12)",
+  red12:   "rgba(216,90,48,0.12)",
+};
 
 const PLAN_COLORS: Record<string, string> = {
-  starter: "#1D9E75", growth: "#7F77DD", enterprise: "#BA7517", free: "#888780",
+  starter: C.green, growth: C.purple, enterprise: C.amber, free: C.grey,
 };
-
-const PlanPie: React.FC<{ data: { plan: string; count: number; revenue: number }[] }> = ({ data }) => {
-  const [active, setActive] = useState<number | null>(null);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-      <PieChart width={110} height={110}>
-        <Pie data={data} cx={50} cy={50} innerRadius={30} outerRadius={50}
-          dataKey="count" paddingAngle={3}
-          onMouseEnter={(_, i) => setActive(i)} onMouseLeave={() => setActive(null)}>
-          {data.map((entry, i) => (
-            <Cell key={entry.plan}
-              fill={PLAN_COLORS[entry.plan.toLowerCase()] ?? "#AFA9EC"}
-              opacity={active === null || active === i ? 1 : 0.4} stroke="none" />
-          ))}
-        </Pie>
-      </PieChart>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {data.map((d) => (
-          <div key={d.plan} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: PLAN_COLORS[d.plan.toLowerCase()] ?? "#AFA9EC" }} />
-            <span style={{ color: "var(--text)", textTransform: "capitalize" }}>{d.plan}</span>
-            <span style={{ color: "var(--text2)", marginLeft: "auto", paddingLeft: 12 }}>
-              {d.count} · <span style={{ color: "var(--text)" }}>${d.revenue.toLocaleString()}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// ── Top client row ────────────────────────────────────────────────────────────
 
 const PLAN_BADGE: Record<string, { bg: string; color: string }> = {
   starter:    { bg: "rgba(29,158,117,0.12)",  color: "#085041" },
@@ -76,144 +30,608 @@ const PLAN_BADGE: Record<string, { bg: string; color: string }> = {
   free:       { bg: "rgba(136,135,128,0.15)", color: "#444441" },
 };
 
-const TopClientRow: React.FC<{ client: TopClient; rank: number }> = ({ client, rank }) => {
-  const badge = PLAN_BADGE[client.plan?.toLowerCase()] ?? PLAN_BADGE.free;
-  const usagePct = Math.min(100, Math.round(client.usage_pct ?? 0));
-  const barColor = usagePct >= 90 ? "#D85A30" : usagePct >= 70 ? "#BA7517" : "#7F77DD";
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const fmt   = (n: number) => (n ?? 0).toLocaleString();
+const fmtMs = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+
+function Chip({ label, positive }: { label: string; positive: boolean }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 90px 160px 80px 80px",
-      alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600 }}>#{rank}</span>
-      <div>
-        <p style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", marginBottom: 1 }}>{client.name}</p>
-        <p style={{ fontSize: 11, color: "var(--text2)" }}>{client.email}</p>
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20,
+      background: positive ? C.green12 : C.red12,
+      color: positive ? "#0F6E56" : "#993C1D",
+    }}>{label}</span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KPI Trend Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TrendCardProps {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent?: string;
+  icon?: string;
+  chips?: { label: string; positive: boolean; tag?: string }[];
+}
+
+const TrendCard: React.FC<TrendCardProps> = ({ label, value, sub, accent, icon, chips }) => (
+  <div className="admin-metric" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <p className="admin-metric__label" style={{ margin: 0 }}>{label}</p>
+      {icon && <span style={{ fontSize: 15, opacity: 0.45 }}>{icon}</span>}
+    </div>
+    <p className="admin-metric__value" style={{ margin: 0, ...(accent ? { color: accent } : {}) }}>
+      {value}
+    </p>
+    {chips && chips.length > 0 && (
+      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+        {chips.map((c, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            {c.tag && <span style={{ fontSize: 9, color: "var(--text3)", fontWeight: 700 }}>{c.tag}</span>}
+            <Chip label={c.label} positive={c.positive} />
+          </div>
+        ))}
       </div>
-      <span style={{ padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-        background: badge.bg, color: badge.color, textTransform: "capitalize", textAlign: "center" }}>
-        {client.plan}
-      </span>
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text3)", marginBottom: 4 }}>
-          <span>{(client.messages_used ?? 0).toLocaleString()} / {(client.messages_quota ?? 0).toLocaleString()} msgs</span>
-          <span style={{ color: barColor, fontWeight: 600 }}>{usagePct}%</span>
+    )}
+    {sub && <p className="admin-metric__sub" style={{ margin: 0 }}>{sub}</p>}
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Revenue + Profit wide card (spans 2 columns)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RevProfitCard: React.FC<{
+  revenue: number; revLast: number; revChange: number;
+  profit: number;  aiCost: number;
+}> = ({ revenue, revLast, revChange, profit, aiCost }) => (
+  <div className="admin-metric" style={{ gridColumn: "span 2", display: "flex", flexDirection: "column", gap: 8 }}>
+    <p className="admin-metric__label" style={{ margin: 0 }}>Revenue &amp; Profit</p>
+    <div style={{ display: "flex", gap: 28, alignItems: "flex-end", flexWrap: "wrap" }}>
+      {/* Revenue */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <span style={{ fontSize: 11, color: "var(--text3)" }}>This month</span>
+        <span style={{ fontSize: 26, fontWeight: 700, color: C.green, lineHeight: 1 }}>
+          ${fmt(revenue)}
+        </span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <Chip
+            label={`${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}% vs last month`}
+            positive={revChange >= 0}
+          />
+          <span style={{ fontSize: 10, color: "var(--text3)" }}>${fmt(revLast)} last mo</span>
         </div>
-        <div style={{ height: 4, borderRadius: 2, background: "rgba(128,128,128,0.15)", overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${usagePct}%`, background: barColor, borderRadius: 2 }} />
-        </div>
       </div>
-      <div style={{ textAlign: "right" }}>
-        <p style={{ fontSize: 12, fontWeight: 500, color: "var(--text)" }}>{(client.storage_used_gb ?? 0).toFixed(1)} GB</p>
-        <p style={{ fontSize: 10, color: "var(--text3)" }}>/ {client.storage_quota_gb ?? 0} GB</p>
+
+      <div style={{ width: 1, height: 44, background: "var(--border)", alignSelf: "center" }} />
+
+      {/* Profit */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <span style={{ fontSize: 11, color: "var(--text3)" }}>Est. net profit</span>
+        <span style={{ fontSize: 26, fontWeight: 700, color: C.purple, lineHeight: 1 }}>
+          ~${fmt(profit)}
+        </span>
+        <span style={{ fontSize: 10, color: "var(--text3)" }}>
+          After ~${fmt(aiCost)} AI costs (~30%)
+        </span>
       </div>
-      <div style={{ textAlign: "right" }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>${client.mrr ?? 0}</p>
-        <p style={{ fontSize: 10, color: "var(--text3)" }}>/ mo</p>
+    </div>
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gas gauge
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GasGauge: React.FC<{ used: number; quota: number }> = ({ used, quota }) => {
+  const hasData = used > 0 && quota > 0;
+  const pct     = hasData ? Math.min(100, (used / quota) * 100) : 0;
+  const color   = pct >= 90 ? C.red : pct >= 70 ? C.amber : C.green;
+  const r = 44, cx = 58, cy = 58;
+  const startAngle = Math.PI * 0.8, endAngle = Math.PI * 2.2;
+  const sweep = endAngle - startAngle;
+  const angle = startAngle + sweep * (pct / 100);
+  const x1 = cx + r * Math.cos(startAngle), y1 = cy + r * Math.sin(startAngle);
+  const x2 = cx + r * Math.cos(endAngle),   y2 = cy + r * Math.sin(endAngle);
+  const xp = cx + r * Math.cos(angle),       yp = cy + r * Math.sin(angle);
+  const largeArc = sweep * (pct / 100) > Math.PI ? 1 : 0;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+      <svg width={116} height={80} viewBox="0 0 116 80" style={{ flexShrink: 0 }}>
+        <path d={`M ${x1} ${y1} A ${r} ${r} 0 1 1 ${x2} ${y2}`}
+          fill="none" stroke="rgba(128,128,128,0.12)" strokeWidth={9} strokeLinecap="round" />
+        {hasData && (
+          <path d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${xp} ${yp}`}
+            fill="none" stroke={color} strokeWidth={9} strokeLinecap="round" />
+        )}
+        <text x={cx} y={cy + 6} textAnchor="middle" fontSize={15} fontWeight={700} fill={hasData ? color : "var(--text3)"}>
+          {hasData ? `${Math.round(pct)}%` : "—"}
+        </text>
+        <text x={cx} y={cy + 19} textAnchor="middle" fontSize={8} fill="var(--text3)">
+          {hasData ? "of quota" : "no data yet"}
+        </text>
+      </svg>
+      <div style={{ fontSize: 11, color: "var(--text2)", lineHeight: 1.8 }}>
+        <div><strong style={{ color: "var(--text)" }}>{hasData ? fmt(used) : "—"}</strong> used</div>
+        <div style={{ color: "var(--text3)" }}>{hasData ? fmt(quota) : "—"} quota</div>
+        <div style={{ color: "var(--text3)", fontSize: 10 }}>Mistral API / mo</div>
       </div>
     </div>
   );
 };
 
-// ── Activity feed ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Doc type bars
+// ─────────────────────────────────────────────────────────────────────────────
 
-const ActivityFeed: React.FC<{ items: ActivityItem[] }> = ({ items }) => (
-  <div style={{ display: "flex", flexDirection: "column" }}>
-    {items.slice(0, 10).map((item, i) => (
-      <div key={i} style={{ display: "flex", gap: 10, padding: "8px 0",
-        borderBottom: i < items.length - 1 ? "1px solid var(--border)" : "none", alignItems: "flex-start" }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#7F77DD", flexShrink: 0, marginTop: 5 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 12, color: "var(--text)", marginBottom: 1 }}>
-            <strong style={{ fontWeight: 600 }}>{item.bot_name}</strong>{" — "}
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              display: "inline-block", maxWidth: 260, verticalAlign: "bottom" }}>{item.message}</span>
-          </p>
-          <p style={{ fontSize: 10, color: "var(--text3)" }}>
-            {new Date(item.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
-          </p>
+const DocTypeChart: React.FC<{ data: { type: string; count: number }[] }> = ({ data }) => {
+  const colors = [C.purple, C.green, C.amber, C.red, C.grey];
+  const max = Math.max(...data.map(d => d.count), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {data.map((d, i) => (
+        <div key={d.type}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
+            <span style={{ color: "var(--text2)", fontWeight: 600 }}>{d.type}</span>
+            <span style={{ color: "var(--text)", fontWeight: 600 }}>{fmt(d.count)}</span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(128,128,128,0.1)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%", width: `${(d.count / max) * 100}%`,
+              background: colors[i % colors.length], borderRadius: 3,
+              transition: "width 0.5s cubic-bezier(0.34,1.56,0.64,1)",
+            }} />
+          </div>
         </div>
+      ))}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Response time sparkline
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ResponseSparkline: React.FC<{
+  data: { date: string; avg_ms: number }[];
+  avgMs: number;
+}> = ({ data, avgMs }) => {
+  const color = avgMs >= 3000 ? C.red : avgMs >= 1500 ? C.amber : C.green;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: 26, fontWeight: 700, color, lineHeight: 1 }}>{fmtMs(avgMs)}</span>
+        <span style={{ fontSize: 10, color: "var(--text3)" }}>avg this month</span>
       </div>
-    ))}
-  </div>
-);
+      <ResponsiveContainer width="100%" height={55}>
+        <LineChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+          <Line type="monotone" dataKey="avg_ms" stroke={color} strokeWidth={2} dot={false} />
+          <Tooltip
+            contentStyle={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }}
+            formatter={(v: any) => [fmtMs(v), "Avg"]}
+            labelStyle={{ color: "var(--text3)" }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        {[{ l: "≤1s Fast", c: C.green }, { l: "1–3s OK", c: C.amber }, { l: ">3s Slow", c: C.red }].map(t => (
+          <div key={t.l} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: t.c }} />
+            <span style={{ fontSize: 9, color: "var(--text3)" }}>{t.l}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
-// ── Main — now accepts data as props, no internal fetch ───────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Top clients table — sorted by message count
+// ─────────────────────────────────────────────────────────────────────────────
+const TopClientsTable: React.FC<{ clients: TopClient[] }> = ({ clients }) => {
+  const all = clients ?? [];
 
-interface Props {
-  stats: AdminOverviewData | null;
-  loading: boolean;
-}
+  if (all.length === 0) {
+    return <p className="admin-empty">No client data.</p>;
+  }
+
+  // Sort by messages
+  const sorted = [...all].sort(
+    (a, b) => (b.messages_used ?? 0) - (a.messages_used ?? 0)
+  );
+
+  const top5 = sorted.slice(0, 5);
+
+  // Total messages (ALL users, not just top 5)
+  const totalMsgs = all.reduce(
+    (sum, c) => sum + (c.messages_used ?? 0),
+    0
+  );
+
+  // Sum of top 5
+  const top5Total = top5.reduce(
+    (sum, c) => sum + (c.messages_used ?? 0),
+    0
+  );
+
+  const othersMsgs = totalMsgs - top5Total;
+
+  const getPct = (val: number) =>
+    totalMsgs > 0 ? Math.round((val / totalMsgs) * 100) : 0;
+
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "22px 1fr 80px 1fr 80px",
+          gap: 12,
+          paddingBottom: 8,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        {["#", "Client", "Plan", "Messages", "Storage"].map((h) => (
+          <span
+            key={h}
+            style={{
+              fontSize: 10,
+              color: "var(--text3)",
+              fontWeight: 600,
+              textTransform: "uppercase",
+            }}
+          >
+            {h}
+          </span>
+        ))}
+      </div>
+
+      {/* Top 5 */}
+      {top5.map((c, i) => {
+        const badge =
+          PLAN_BADGE[c.plan?.toLowerCase()] ?? PLAN_BADGE.free;
+
+        const pct = getPct(c.messages_used ?? 0);
+
+        const barColor =
+          pct >= 40 ? C.red : pct >= 20 ? C.amber : C.purple;
+
+        return (
+          <div
+            key={c.id ?? i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "22px 1fr 80px 1fr 80px",
+              alignItems: "center",
+              gap: 12,
+              padding: "10px 0",
+              borderBottom:
+                i < top5.length - 1 ? "1px solid var(--border)" : "none",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text3)",
+                fontWeight: 600,
+              }}
+            >
+              #{i + 1}
+            </span>
+
+            <div>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                {c.name || c.email?.split("@")[0] || "—"}
+              </p>
+              <p style={{ margin: 0, fontSize: 11, color: "var(--text2)" }}>
+                {c.email}
+              </p>
+            </div>
+
+            <span
+              style={{
+                padding: "3px 9px",
+                borderRadius: 20,
+                fontSize: 11,
+                background: badge.bg,
+                color: badge.color,
+                textTransform: "capitalize",
+              }}
+            >
+              {c.plan ?? "free"}
+            </span>
+
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 10,
+                  marginBottom: 4,
+                }}
+              >
+                <span>{fmt(c.messages_used ?? 0)} msgs</span>
+                <span style={{ fontWeight: 700 }}>{pct}%</span>
+              </div>
+
+              <div
+                style={{
+                  height: 4,
+                  background: "rgba(128,128,128,0.12)",
+                  borderRadius: 2,
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${pct}%`,
+                    background: barColor,
+                    borderRadius: 2,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <p style={{ margin: 0, fontSize: 12 }}>
+                {(c.storage_used_gb ?? 0).toFixed(1)} GB
+              </p>
+              <p style={{ margin: 0, fontSize: 10, color: "var(--text3)" }}>
+                / {c.storage_quota_gb ?? "—"} GB
+              </p>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Others row */}
+      {othersMsgs > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "22px 1fr 80px 1fr 80px",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 0",
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--text3)" }}>+</span>
+
+          <div>
+            <p style={{ margin: 0, fontSize: 13 }}>Other users</p>
+          </div>
+
+          <span style={{ fontSize: 11, color: "var(--text3)" }}>—</span>
+
+          <div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10,
+                marginBottom: 4,
+              }}
+            >
+              <span>{fmt(othersMsgs)} msgs</span>
+              <span style={{ fontWeight: 700 }}>
+                {getPct(othersMsgs)}%
+              </span>
+            </div>
+
+            <div
+              style={{
+                height: 4,
+                background: "rgba(128,128,128,0.12)",
+                borderRadius: 2,
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: `${getPct(othersMsgs)}%`,
+                  background: C.grey,
+                  borderRadius: 2,
+                }}
+              />
+            </div>
+          </div>
+
+          <div />
+        </div>
+      )}
+    </div>
+  );
+};
+// ─────────────────────────────────────────────────────────────────────────────
+// Dual-axis chart tooltip
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DualTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: "var(--bg2)", border: "1px solid var(--border)",
+      borderRadius: 10, padding: "10px 14px", fontSize: 12,
+    }}>
+      <p style={{ color: "var(--text3)", marginBottom: 6, fontSize: 11 }}>{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.dataKey} style={{ color: p.color, margin: "2px 0" }}>
+          <strong>{p.name}:</strong>{" "}
+          {p.dataKey === "revenue" ? `$${fmt(p.value)}` : fmt(p.value)}
+        </p>
+      ))}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Props { stats: AdminOverviewData | null; loading: boolean; }
 
 const AdminOverview: React.FC<Props> = ({ stats, loading }) => {
   if (loading) return <div className="admin-loading">Loading overview…</div>;
-  if (!stats)  return <div className="admin-loading">Loading overview2026</div>;
+  if (!stats)  return <div className="admin-loading">No data available.</div>;
 
-  const data = stats;
-  const revChange = data.revenue_change_pct ?? 0;
+  const d          = stats;
+  const revChange  = d.revenue_change_pct ?? 0;
+  const profit     = Math.round(d.revenue_this_month * 0.7);
+  const aiCost     = Math.round(d.revenue_this_month * 0.3);
+
+  const avgMsgPerSession = d.total_sessions && d.total_sessions > 0
+    ? Math.round((d.messages_this_month / d.total_sessions) * 10) / 10
+    : null;
+
+  const ww  = d.user_change_ww  ?? null;
+  const mom = d.user_change_mom ?? null;
+  const yoy = d.user_change_yoy ?? null;
+
+  const revenueTimeline = d.revenue_per_day ?? (d.messages_per_day ?? []).map((x: any) => ({
+    date: x.date,
+    revenue:   Math.round(x.count * 0.4),
+    new_users: x.new_users ?? Math.round(x.count * 0.05),
+  }));
+
+  const avgResponseMs   = d.avg_response_ms ?? 0;
+  const responseTimeline = d.response_time_per_day ?? (d.messages_per_day ?? []).map((x: any) => ({
+    date: x.date, avg_ms: avgResponseMs,
+  }));
+
+  // Only show real token values — no fallback estimation
+  const tokensUsed  = d.tokens_used_this_month  ?? 0;
+  const tokensQuota = d.tokens_quota_this_month ?? 0;
+
+  const docTypes = (d.doc_types ?? []).filter(t => t.count > 0);
 
   return (
     <div className="admin-overview">
-      <div className="admin-metrics-grid">
-        <Metric label="MRR" value={`$${data.mrr.toLocaleString()}`} sub="monthly recurring"
-          chip={{ label: `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}% MoM`, positive: revChange >= 0 }} />
-        <Metric label="ARR" value={`$${data.arr.toLocaleString()}`} sub="annual run rate" />
-        <Metric label="Revenue this month" value={`$${data.revenue_this_month.toLocaleString()}`}
-          sub={`vs $${data.revenue_last_month.toLocaleString()} last month`} accent="#1D9E75" />
-        <Metric label="Total users"      value={data.total_users}      sub={`+${data.new_users_this_month} this month`} />
-        <Metric label="Total bots" value={data.total_bots} />
-        <Metric label="Messages / month" value={data.messages_this_month.toLocaleString()} sub={`${data.total_messages.toLocaleString()} total`} />
+
+      {/* ── Row 1: KPI cards (4-col) ─────────────────────────────────────── */}
+      <div className="admin-metrics-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+        {/* Revenue + Profit (spans 2) */}
+        <RevProfitCard
+          revenue={d.revenue_this_month}
+          revLast={d.revenue_last_month}
+          revChange={revChange}
+          profit={profit}
+          aiCost={aiCost}
+        />
+
+        {/* Messages */}
+        <TrendCard
+          label="Messages / month"
+          value={fmt(d.messages_this_month)}
+          icon="💬"
+          chips={d.messages_change_pct != null ? [{
+            label: `${d.messages_change_pct >= 0 ? "+" : ""}${d.messages_change_pct.toFixed(1)}% MoM`,
+            positive: d.messages_change_pct >= 0,
+          }] : undefined}
+          sub={avgMsgPerSession != null
+            ? `${avgMsgPerSession} avg/session · ${fmt(d.total_messages)} total`
+            : `${fmt(d.total_messages)} total`}
+        />
+
+        {/* New users + growth badges */}
+        <TrendCard
+          label="New users (30d)"
+          value={fmt(d.new_users_this_month)}
+          icon="📈"
+          sub={`${fmt(d.total_users)} total · ${fmt(d.total_bots)} bots`}
+          chips={[
+            ...(ww  != null ? [{ label: `${ww  >= 0 ? "+" : ""}${ww.toFixed(1)}%`,  positive: ww  >= 0, tag: "W/W" }] : []),
+            ...(mom != null ? [{ label: `${mom >= 0 ? "+" : ""}${mom.toFixed(1)}%`, positive: mom >= 0, tag: "M/M" }] : []),
+            ...(yoy != null ? [{ label: `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`, positive: yoy >= 0, tag: "Y/Y" }] : []),
+          ]}
+        />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      {/* ── Revenue & User Growth chart ───────────────────────────────────── */}
+      {revenueTimeline.length > 0 && (
         <div className="admin-card">
-          <p className="admin-card__title">Plan breakdown</p>
-          {data.plan_breakdown?.length > 0
-            ? <PlanPie data={data.plan_breakdown} />
-            : <p className="admin-empty">No plan data.</p>}
+          <p className="admin-card__title">
+            Revenue &amp; User Growth
+            <span style={{ fontSize: 10, color: "var(--text3)", fontWeight: 400, marginLeft: 6 }}>
+              last {revenueTimeline.length} days
+            </span>
+          </p>
+          <ResponsiveContainer width="100%" height={210}>
+            <ComposedChart data={revenueTimeline} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor={C.green} stopOpacity={0.18} />
+                  <stop offset="95%" stopColor={C.green} stopOpacity={0}    />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--text3)" }}
+                tickFormatter={(v: string) => v.slice(5)} />
+              <YAxis yAxisId="rev" orientation="left" width={52}
+                tick={{ fontSize: 10, fill: "var(--text3)" }}
+                tickFormatter={(v: number) => `$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+              <YAxis yAxisId="users" orientation="right" width={32}
+                tick={{ fontSize: 10, fill: "var(--text3)" }} />
+              <Tooltip content={<DualTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+              <Area yAxisId="rev" type="monotone" dataKey="revenue" name="Revenue ($)"
+                stroke={C.green} strokeWidth={2.5} fill="url(#revGrad)" dot={false} />
+              <Bar yAxisId="users" dataKey="new_users" name="New users"
+                fill={C.purple} opacity={0.7} radius={[3, 3, 0, 0]} barSize={8} />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
+      )}
+
+      {/* ── Perf / Token / Doc cards ──────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+
         <div className="admin-card">
-          <p className="admin-card__title">Profit estimate</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              { label: "Gross revenue",   value: `$${data.revenue_this_month.toLocaleString()}`, color: "#1D9E75" },
-              { label: "Est. AI costs",   value: `~$${Math.round(data.revenue_this_month * 0.3).toLocaleString()}`, color: "#D85A30", sub: "~30% of revenue" },
-              { label: "Est. net profit", value: `~$${Math.round(data.revenue_this_month * 0.7).toLocaleString()}`, color: "#7F77DD", bold: true },
-            ].map((row) => (
-              <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "var(--text2)" }}>{row.label}</span>
-                <span style={{ fontSize: (row as any).bold ? 16 : 13, fontWeight: (row as any).bold ? 600 : 400, color: row.color }}>
-                  {row.value}
-                  {(row as any).sub && <span style={{ fontSize: 10, color: "var(--text3)", marginLeft: 6 }}>{(row as any).sub}</span>}
-                </span>
-              </div>
-            ))}
-            <p style={{ fontSize: 10, color: "var(--text3)", marginTop: 4, fontStyle: "italic" }}>
-              AI cost ratio is configurable in settings. Connect your billing provider for real figures.
+          <p className="admin-card__title">⚡ Avg. Response Time</p>
+          {avgResponseMs > 0
+            ? <ResponseSparkline data={responseTimeline} avgMs={avgResponseMs} />
+            : <p className="admin-empty" style={{ marginTop: 12 }}>No response-time data yet.</p>
+          }
+        </div>
+
+        <div className="admin-card">
+          <p className="admin-card__title">🪙 Token Consumption</p>
+          <GasGauge used={tokensUsed} quota={tokensQuota} />
+          {tokensUsed === 0 && (
+            <p style={{ fontSize: 10, color: "var(--text3)", marginTop: 10, fontStyle: "italic" }}>
+              Track real usage by storing a <code>tokens_used</code> field on each widget_message.
             </p>
-          </div>
+          )}
+        </div>
+
+        <div className="admin-card">
+          <p className="admin-card__title">📄 Document Types</p>
+          {docTypes.length > 0
+            ? <DocTypeChart data={docTypes} />
+            : <p className="admin-empty" style={{ marginTop: 12 }}>No documents indexed yet.</p>
+          }
         </div>
       </div>
 
+      {/* ── Top 5 clients by message count ───────────────────────────────── */}
       <div className="admin-card">
-        <p className="admin-card__title">Top 5 clients</p>
-        <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 90px 160px 80px 80px",
-          gap: 12, padding: "0 0 6px", borderBottom: "1px solid var(--border)" }}>
-          {["#", "Client", "Plan", "Message usage", "Storage", "MRR"].map((h) => (
-            <span key={h} style={{ fontSize: 10, color: "var(--text3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
-          ))}
-        </div>
-        {data.top_clients?.length > 0
-          ? data.top_clients.slice(0, 5).map((c, i) => <TopClientRow key={c.id} client={c} rank={i + 1} />)
-          : <p className="admin-empty">No client data.</p>}
-      </div>
-
-      <div className="admin-card">
-        <p className="admin-card__title">Live activity
-          <span style={{ fontSize: 10, color: "var(--text3)", fontWeight: 400, marginLeft: 6 }}>last 10 widget messages</span>
+        <p className="admin-card__title">
+          Top 5 clients
+          <span style={{ fontSize: 10, color: "var(--text3)", fontWeight: 400, marginLeft: 6 }}>
+            ranked by messages
+          </span>
         </p>
-        {data.activity_feed?.length > 0
-          ? <ActivityFeed items={data.activity_feed} />
-          : <p className="admin-empty">No recent activity.</p>}
+        <TopClientsTable clients={d.top_clients ?? []} />
       </div>
+
+      
+
     </div>
   );
 };
