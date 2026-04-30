@@ -569,6 +569,10 @@ const AdminOverview: React.FC<Props> = ({ stats, loading }) => {
                   <stop offset="5%"  stopColor={C.green} stopOpacity={0.18} />
                   <stop offset="95%" stopColor={C.green} stopOpacity={0}    />
                 </linearGradient>
+                <linearGradient id="userGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor={C.purple} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={C.purple} stopOpacity={0}   />
+                </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--text3)" }}
@@ -582,8 +586,8 @@ const AdminOverview: React.FC<Props> = ({ stats, loading }) => {
               <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
               <Area yAxisId="rev" type="monotone" dataKey="revenue" name="Revenue ($)"
                 stroke={C.green} strokeWidth={2.5} fill="url(#revGrad)" dot={false} />
-              <Bar yAxisId="users" dataKey="new_users" name="New users"
-                fill={C.purple} opacity={0.7} radius={[3, 3, 0, 0]} barSize={8} />
+              <Area yAxisId="users" type="monotone" dataKey="new_users" name="New users"
+                stroke={C.purple} strokeWidth={2} fill="url(#userGrad)" dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

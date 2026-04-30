@@ -77,6 +77,9 @@ services:
       LANGFUSE_HOST: ${LANGFUSE_HOST}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       REDIS_URL: redis://redis:6379/0
+      LLM_MODEL: ${LLM_MODEL}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+
     ports:
       - "8000:8000"
     volumes:

@@ -3,10 +3,18 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2t
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from datetime import datetime
 import logging
 import uuid
 from services.shared_state import cancellation_registry
+
+# ── Model config from environment ─────────────────────────────────────────────
+# ── [SERVER] BGE-M3 remote embeddings — uncomment when server is available ────
+# EMBEDDINGS_BASE_URL = os.getenv("EMBEDDINGS_BASE_URL", "http://192.168.130.177:8081/v1")
+# EMBEDDINGS_MODEL    = os.getenv("EMBEDDINGS_MODEL", "BAAI/bge-m3")
+# EMBEDDINGS_API_KEY  = os.getenv("EMBEDDINGS_API_KEY", "not-needed")
+# ─────────────────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 import time
 from fastapi import HTTPException
@@ -21,14 +29,31 @@ import re
 # Cache Embedding model
 _embeddings = None
 def get_embeddings():
+    """HuggingFace all-MiniLM-L6-v2 embeddings (local).
+    [SERVER] To switch back to remote BGE-M3, uncomment the block below
+    and remove/comment the HuggingFaceEmbeddings block.
+    """
     global _embeddings
     if _embeddings is None:
+        # ── [SERVER] Remote BGE-M3 via OpenAI-compatible API ─────────────────
+        # try:
+        #     emb = OpenAIEmbeddings(
+        #         model=EMBEDDINGS_MODEL,
+        #         base_url=EMBEDDINGS_BASE_URL,
+        #         api_key=EMBEDDINGS_API_KEY or "not-needed",
+        #     )
+        #     emb.embed_query("test")  # smoke-test
+        #     _embeddings = emb
+        #     logger.info(f"Remote BGE-M3 embeddings loaded @ {EMBEDDINGS_BASE_URL}")
+        # except Exception as e:
+        #     logger.warning(f"Remote embeddings failed ({e}), falling back to HuggingFace")
+        # ─────────────────────────────────────────────────────────────────────
         _embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
+            model_name="BAAI/bge-base-en-v1.5",
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True}
         )
-    logger.info("Embeddings model loaded and cached")
+        logger.info("HuggingFace BAAI/bge-base-en-v1.5 embeddings loaded (1024 dims)")
     return _embeddings
 
 # Cache loaded indexes
@@ -138,11 +163,7 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
             return {"success": False, "error": "No chunks created", "chunks": 0}
 
         # ================= EMBEDDINGS =================
-        embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        embeddings = get_embeddings()
 
         if is_cancelled(doc_id):
             return {"success": False, "error": "Cancelled before embeddings", "chunks": 0}

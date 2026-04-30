@@ -4,11 +4,27 @@ import time
 import logging
 import traceback
 from pathlib import Path
-from google import genai
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from database import messages_collection
 from langchain_core.documents import Document
+
+# ── Model config from environment ─────────────────────────────────────────────
+# ── [SERVER] Gemma 4 via Ollama — uncomment when server is available ──────────
+# LLM_MODEL        = os.getenv("LLM_MODEL", "gemma4:26b")
+# LLM_BASE_URL     = os.getenv("OPENAI_BASE_URL", "http://192.168.130.177:11434/v1")
+# LLM_API_KEY      = os.getenv("OPENAI_API_KEY", "not-needed")
+# LLM_TEMPERATURE  = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+# LLM_MAX_TOKENS   = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+# ── [SERVER] BGE-M3 embeddings — uncomment when server is available ───────────
+# EMBEDDINGS_BASE_URL = os.getenv("EMBEDDINGS_BASE_URL", "http://192.168.130.177:8081/v1")
+# EMBEDDINGS_MODEL    = os.getenv("EMBEDDINGS_MODEL", "BAAI/bge-m3")
+# EMBEDDINGS_API_KEY  = os.getenv("EMBEDDINGS_API_KEY", "not-needed")
+
+# ── Active config: Mistral (gen) + HuggingFace (embeddings) ──────────────────
+LLM_TEMPERATURE  = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+LLM_MAX_TOKENS   = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -26,15 +42,31 @@ BACKEND_DIR = Path(__file__).parent.parent.absolute()
 
 _embeddings = None
 def get_embeddings():
+    """HuggingFace all-MiniLM-L6-v2 embeddings (local).
+    [SERVER] To switch back to remote BGE-M3, uncomment the block below
+    and remove/comment the HuggingFaceEmbeddings block.
+    """
     global _embeddings
     if _embeddings is None:
-        logger.info("Loading embeddings model (first time)...")
+        # ── [SERVER] Remote BGE-M3 via OpenAI-compatible API ─────────────────
+        # try:
+        #     emb = OpenAIEmbeddings(
+        #         model=EMBEDDINGS_MODEL,
+        #         base_url=EMBEDDINGS_BASE_URL,
+        #         api_key=EMBEDDINGS_API_KEY or "not-needed",
+        #     )
+        #     emb.embed_query("test")  # smoke-test
+        #     _embeddings = emb
+        #     logger.info(f"Remote BGE-M3 embeddings loaded @ {EMBEDDINGS_BASE_URL}")
+        # except Exception as e:
+        #     logger.warning(f"Remote embeddings failed ({e}), falling back to HuggingFace")
+        # ─────────────────────────────────────────────────────────────────────
         _embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
+            model_name="BAAI/bge-base-en-v1.5",
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True}
         )
-    logger.info("Embeddings model loaded and cached")
+        logger.info("HuggingFace BAAI/bge-base-en-v1.5 embeddings loaded (1024 dims)")
     return _embeddings
 
 # Cache loaded indexes in memory
@@ -46,26 +78,23 @@ def load_faiss_cached(path, embeddings):
     logger.info(f"FAISS index loaded and cached from {path}")
     return _faiss_cache[path]
 
-_gemini_client = None
-def load_gemini():
-    global _gemini_client
-    if _gemini_client is None:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        _gemini_client = genai.GenerativeModel('models/gemini-2.5-flash')
-    logger.info("Gemini model loaded and cached")
-    return _gemini_client
+# ── [SERVER] Primary: local Gemma 4 via Ollama — uncomment when server is available ──
+# _ollama_client = None
+# def load_ollama():
+#     global _ollama_client
+#     if _ollama_client is None:
+#         from langchain_openai import ChatOpenAI
+#         _ollama_client = ChatOpenAI(
+#             model=LLM_MODEL,
+#             base_url=LLM_BASE_URL,
+#             api_key=LLM_API_KEY,
+#             temperature=LLM_TEMPERATURE,
+#             max_tokens=LLM_MAX_TOKENS,
+#         )
+#     logger.info(f"Ollama model loaded and cached ({LLM_MODEL} @ {LLM_BASE_URL})")
+#     return _ollama_client
 
-_gemini_client_2 = None
-def load_gemini_2():
-    global _gemini_client_2
-    if _gemini_client_2 is None:
-        import google.generativeai as genai
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY2"))
-        _gemini_client_2 = genai.GenerativeModel('models/gemini-2.5-flash')
-    logger.info("Gemini model 2 loaded and cached")
-    return _gemini_client_2
-
+# ── Active primary: Mistral ───────────────────────────────────────────────────
 _mistral_client = None
 def load_mistral():
     global _mistral_client
@@ -78,19 +107,6 @@ def load_mistral():
         )
     logger.info("Mistral model loaded and cached")
     return _mistral_client
-
-_stepfun_client = None
-def load_openrouter_stepfun():
-    global _stepfun_client
-    if _stepfun_client is None:
-        from langchain_openai import ChatOpenAI
-        _stepfun_client = ChatOpenAI(
-            model="stepfun/step-3.5-flash:free",
-            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-            openai_api_base="https://openrouter.ai/api/v1"
-        )
-    logger.info("Stepfun model loaded and cached")
-    return _stepfun_client
 
 # ─────────────────────────────────────────────────────────────
 # Langfuse  — initialised once at module load
@@ -180,12 +196,23 @@ def retrieve_relevant_history(user_id: str, session_id: str, question: str, k: i
     try:
         embeddings = get_embeddings()
         memory_db = load_faiss_cached(MEMORY_PATH, embeddings)
+        
+        # Check dimension match before searching
+        query_dim = len(embeddings.embed_query("test"))
+        if memory_db.index.d != query_dim:
+            logger.warning(f"Dimension mismatch ({memory_db.index.d} vs {query_dim}) — deleting stale memory index")
+            import shutil
+            shutil.rmtree(MEMORY_PATH)
+            _faiss_cache.pop(MEMORY_PATH, None)
+            return ""
+        
         results = memory_db.similarity_search(question, k=k)
         if not results:
             return ""
         return "\n\n".join([doc.page_content for doc in results])
     except Exception as e:
         logger.error(f"Failed to retrieve from memory: {e}")
+        logger.error(traceback.format_exc())
         return ""
 
 
@@ -221,20 +248,12 @@ def save_widget_message(bot_id, session_id, question, answer, response_time_ms, 
 # Generate Answer helpers
 # ─────────────────────────────────────────────────────────────
 
-def gemini_generate_answer(system_prompt: str, question: str):
-    llm = load_gemini()
-    return llm.generate_content(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").text.strip()
-
-def gemini_generate_answer_2(system_prompt: str, question: str):
-    llm = load_gemini_2()
-    return llm.generate_content(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").text.strip()
-
-def openrouter_stepfun_generate_answer(system_prompt: str, question: str):
-    llm = load_openrouter_stepfun()
-    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
+# ── [SERVER] generate_with_ollama — uncomment when Gemma/Ollama server is available ──
+# def generate_with_ollama(system_prompt: str, question: str) -> str:
+#     llm = load_ollama()
+#     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
 def generate_with_mistral(system_prompt: str, question: str) -> str:
-    from langchain_mistralai import ChatMistralAI
     llm = load_mistral()
     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
@@ -244,10 +263,9 @@ def generate_with_mistral(system_prompt: str, question: str) -> str:
 
 def handle_timeout(system_prompt: str, question: str):
     models = [
-        ("mistral-small-latest",        generate_with_mistral),
-        ("gemini-2.5-flash",           gemini_generate_answer),
-        ("gemini-2.5-flash-key2",      gemini_generate_answer_2),
-        ("stepfun/step-3.5-flash",     openrouter_stepfun_generate_answer),
+        # ── [SERVER] Gemma 4 via Ollama — uncomment when server is available ──
+        # (LLM_MODEL, generate_with_ollama),
+        ("mistral-small-latest", generate_with_mistral),  # primary (active)
     ]
     for model_name, fn in models:
         try:
@@ -332,20 +350,23 @@ def generate_answer(question: str, user_id: str, session_id: str, memory_session
         logger.info(f"Retrieved {len(docs)} chunks in {retrieval_lat}s")
 
         # ── 2. Memory ─────────────────────────────────────────
-        relevant_history = retrieve_relevant_history(user_id, session_id, question, k=4)
+        relevant_history = retrieve_relevant_history(user_id, memory_session_id, question, k=4)
 
         # ── 3. System prompt ──────────────────────────────────
         history_block = f"\n\nRelevant conversation history:\n{relevant_history}" if relevant_history else ""
-        system_prompt = f"""You are a helpful assistant that answers questions based on provided documents.
-Rules:
-- Answer based strictly on the document context provided
+        system_prompt = f"""You are a helpful assistant.
+- Answer the question based on the provided context.
+- Answer to greetings.
+
+- Be clear and concise.
 - If the context contains relevant information, use it fully even if partial or implicit
-- Do not refuse to answer when relevant content exists — extract and present what is available
 - If information is genuinely not present in the context, say so clearly
 - Answer in the same language as the question
+- If the context contains no relevant information at all, respond ONLY with the exact phrase: "I don't have enough information to answer this." Do not paraphrase or add anything else.
+Context:
+{context}{history_block}
+"""
 
-Document context:
-{context}{history_block}"""
 
         # ── 4. Generate ───────────────────────────────────────
         t_gen_start   = time.time()
@@ -353,16 +374,35 @@ Document context:
         gen_lat       = round(time.time() - t_gen_start, 3)
         response_time_ms = int(gen_lat * 1000)
 
-        save_widget_message(
-            bot_id=user_id,   # ⚠️ IMPORTANT: replace this if needed (see below)
-            session_id=session_id,
-            question=question,
-            answer=answer,
-            response_time_ms=response_time_ms,
-            docs=docs
-        )
         total_lat     = round(time.time() - t_total_start, 3)
         logger.info(f"Answer generated in {gen_lat}s (total {total_lat}s) via {model}")
+
+        #save without blocking
+        # ALWAYS SAVE (independent of Langfuse)
+        import threading
+
+        def _save_all():
+            try:
+                save_exchange_to_memory(user_id, memory_session_id, question, answer)
+
+                # Use memory_session_id (the widget's chat session) so that
+                # _fetch_chat_history can find both user and assistant messages
+                # by the session_id stored on the intervention ticket.
+                save_message(memory_session_id, user_id, "user", question)
+                save_message(memory_session_id, user_id, "assistant", answer)
+
+                save_widget_message(
+                    bot_id=user_id,
+                    session_id=memory_session_id,
+                    question=question,
+                    answer=answer,
+                    response_time_ms=int(gen_lat * 1000),
+                    docs=docs,
+                )
+            except Exception as e:
+                logger.error(f"Background save failed: {e}")
+
+        threading.Thread(target=_save_all, daemon=True).start()
 
         # ── 5. Langfuse v4 tracing ────────────────────────────
         if _langfuse and trace_id:
@@ -426,18 +466,7 @@ Document context:
                 logger.error(f"[langfuse] ❌ Tracing failed: {e}")
                 import traceback as _tb; logger.error(_tb.format_exc())
 
-        # ── 6. Save (non-blocking) ────────────────────────────────────
-            import threading
-
-            def _save_all():
-                try:
-                    save_exchange_to_memory(user_id, session_id, question, answer)
-                    save_message(session_id, user_id, "user", question)
-                    save_message(session_id, user_id, "assistant", answer)
-                except Exception as e:
-                    logger.error(f"Background save failed: {e}")
-
-            threading.Thread(target=_save_all, daemon=True).start()
+       
 
 
         # ── 7. Sources ────────────────────────────────────────
@@ -483,6 +512,201 @@ Document context:
             except Exception: pass
         return {"answer": f"An error occurred: {str(e)}", "sources": [], "trace_id": trace_id}
 
+
+
+# ─────────────────────────────────────────────────────────────
+# Streaming RAG pipeline
+# ─────────────────────────────────────────────────────────────
+
+async def generate_answer_stream(question: str, user_id: str, session_id: str, memory_session_id: str):
+    import asyncio
+    import json
+    import time
+
+    memory_session_id = memory_session_id or session_id
+    clean_session_id  = session_id.replace("session_", "").replace("session-", "")
+    VECTOR_PATH       = get_vector_path(user_id, clean_session_id)
+
+    # ── create trace id upfront ───────────────────────────────
+    trace_id = None
+    if _langfuse:
+        try:
+            from langfuse import Langfuse as _LF
+            trace_id = _LF.create_trace_id()
+            logger.info(f"[langfuse] ✅ Stream trace_id={trace_id}")
+        except Exception as e:
+            logger.error(f"[langfuse] ❌ create_trace_id failed: {e}")
+
+    if not os.path.exists(VECTOR_PATH):
+        yield "No documents indexed yet. Please upload documents first."
+        return
+
+    try:
+        t_total_start = time.time()
+
+        # ── 1. Retrieve + memory in parallel ─────────────────────────────────
+        embeddings = get_embeddings()
+        db         = load_faiss_cached(VECTOR_PATH, embeddings)
+
+        t_ret_start = time.time()
+        docs_task   = asyncio.to_thread(db.similarity_search_with_score, question, k=4)
+        memory_task = asyncio.to_thread(retrieve_relevant_history, user_id, memory_session_id, question, k=4)
+        docs_with_scores, relevant_history = await asyncio.gather(docs_task, memory_task)
+        retrieval_lat = round(time.time() - t_ret_start, 3)
+
+        docs = [doc for doc, _ in docs_with_scores]
+
+        if not docs:
+            yield "I couldn't find any relevant information in the documents."
+            return
+
+        context       = "\n\n".join(doc.page_content for doc in docs)
+        history_block = f"\n\nRelevant conversation history:\n{relevant_history}" if relevant_history else ""
+
+        system_prompt = """You are a helpful assistant.
+- Answer the question based on the provided context.
+- Answer to greetings.
+- Be clear and concise.
+- If the context contains relevant information, use it fully even if partial or implicit
+- If information is genuinely not present in the context, say so clearly
+- Answer in the same language as the question
+- If the context contains no relevant information at all, respond ONLY with the exact phrase: "I don't have enough information to answer this." Do not paraphrase or add anything else.
+Context:
+{context}{history_block}
+"""
+
+        # ── 2. Stream generation ──────────────────────────────────────────────
+        # ── [SERVER] Gemma 4 streaming via Ollama — uncomment when server is available ──
+        # from langchain_openai import ChatOpenAI
+        # llm = ChatOpenAI(
+        #     model=LLM_MODEL,
+        #     base_url=LLM_BASE_URL,
+        #     api_key=LLM_API_KEY,
+        #     temperature=LLM_TEMPERATURE,
+        #     max_tokens=LLM_MAX_TOKENS,
+        #     streaming=True,
+        # )
+        from langchain_mistralai import ChatMistralAI
+        llm = ChatMistralAI(
+            model="mistral-small-latest",
+            mistral_api_key=os.getenv("MISTRAL_API_KEY", ""),
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+        )
+
+        full_answer = ""
+        t_gen_start = time.time()
+        async for chunk in llm.astream(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"):
+            token = chunk.content
+            if token:
+                full_answer += token
+                yield token
+        gen_lat   = round(time.time() - t_gen_start, 3)
+        total_lat = round(time.time() - t_total_start, 3)
+
+        # ── 3. Langfuse tracing ───────────────────────────────────────────────
+        if _langfuse and trace_id:
+            try:
+                from langfuse.types import TraceContext
+                ctx = TraceContext(trace_id=trace_id)
+
+                with _langfuse.start_as_current_observation(
+                    trace_context=ctx,
+                    name="rag-stream",
+                    as_type="span",
+                    input=question,
+                    output=full_answer,
+                    metadata={
+                        "user_id":    str(user_id),
+                        "session_id": session_id,
+                        "total_lat":  total_lat,
+                        "timestamp":  datetime.utcnow().isoformat(),
+                    },
+                ):
+                    with _langfuse.start_as_current_observation(
+                        name="retrieval",
+                        as_type="retriever",
+                        input={"query": question},
+                        output={"chunks_retrieved": len(docs), "context_preview": context[:300]},
+                        metadata={"top_k": 4, "latency_s": retrieval_lat},
+                    ):
+                        pass
+
+                    with _langfuse.start_as_current_observation(
+                        name="llm-generation",
+                        as_type="generation",
+                        input=question,
+                        output=full_answer,
+                        model="mistral-small-latest",
+                        metadata={"latency_s": gen_lat, "context_chars": len(context), "used_memory": bool(relevant_history)},
+                    ):
+                        pass
+
+                _langfuse.set_current_trace_io(input=question, output=full_answer)
+                _langfuse.create_score(
+                    trace_id=trace_id,
+                    name="latency_s",
+                    value=total_lat,
+                    comment="Total end-to-end streaming RAG latency",
+                )
+
+                import threading
+                def _flush_langfuse():
+                    try: _langfuse.flush()
+                    except: pass
+                threading.Thread(target=_flush_langfuse, daemon=True).start()
+                logger.info(f"[langfuse] ✅ Stream trace flushed trace_id={trace_id}")
+
+            except Exception as e:
+                logger.error(f"[langfuse] ❌ Stream tracing failed: {e}")
+                import traceback as _tb; logger.error(_tb.format_exc())
+
+        # ── 4. Build sources metadata ─────────────────────────────────────────
+        def score_to_confidence(score: float) -> int:
+            if score < 0.5:   return min(100, round(100 - score * 20))
+            elif score < 1.0: return round(90 - (score - 0.5) * 40)
+            elif score < 1.5: return round(70 - (score - 1.0) * 60)
+            else:             return max(0, round(40 - (score - 1.5) * 80))
+
+        seen = {}
+        for doc, score in docs_with_scores:
+            s = {
+                "source":          doc.metadata.get("source", "Unknown"),
+                "content_preview": doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content,
+                "confidence":      score_to_confidence(score),
+                "score":           round(float(score), 4),
+            }
+            n = s["source"]
+            if n not in seen or s["confidence"] > seen[n]["confidence"]:
+                seen[n] = s
+        sources = sorted(seen.values(), key=lambda x: x["confidence"], reverse=True)
+
+        yield f"__SOURCES__:{json.dumps(sources)}"
+
+        # ── 5. Save in background ─────────────────────────────────────────────
+        import threading
+        def _save_all():
+            try:
+                save_exchange_to_memory(user_id, memory_session_id, question, full_answer)
+                save_message(memory_session_id, user_id, "user", question)
+                save_message(memory_session_id, user_id, "assistant", full_answer)
+                save_widget_message(
+                    bot_id=user_id,
+                    session_id=memory_session_id,
+                    question=question,
+                    answer=full_answer,
+                    response_time_ms=int(gen_lat * 1000),
+                    docs=docs,
+                )
+            except Exception as e:
+                logger.error(f"Background save failed: {e}")
+        threading.Thread(target=_save_all, daemon=True).start()
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Streaming error: {e}")
+        logger.error(traceback.format_exc())
+        yield f"An error occurred: {str(e)}"
 
 def log_user_feedback(trace_id: str, thumbs_up: bool, comment: str = ""):
     if not _langfuse or not trace_id:

@@ -29,7 +29,6 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from langchain_ollama import ChatOllama
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -61,14 +60,29 @@ print = safe_print  # shadow built-in
 # ── env ───────────────────────────────────────────────────────────────────────
 MISTRAL_API_KEY     = os.getenv("MISTRAL_API_KEY", "")
 OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
-# LANGFUSE_SECRET_KEY="sk-lf-08452f62-197d-4fb3-8ae8-79b642254d43"
-# LANGFUSE_PUBLIC_KEY="pk-lf-288b8bdd-2abd-4196-b009-55b7208666b6"
-# LANGFUSE_BASE_URL="https://cloud.langfuse.com"
-# LANGFUSE_HOST        = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # for both RAG and RAGAS (keep consistent for fair eval)
-JUDGE_MODEL  = "mistral-small-latest"
-GEN_MODEL    = "mistral-small-latest"   # generation model
+# LLM (generation + judge) — points to local Ollama via OpenAI-compatible API
+LLM_PROVIDER         = os.getenv("LLM_PROVIDER", "openai")
+LLM_MODEL            = os.getenv("LLM_MODEL", "gemma4:26b")
+LLM_BASE_URL         = os.getenv("OPENAI_BASE_URL", "http://192.168.130.177:11434/v1")
+LLM_API_KEY          = os.getenv("OPENAI_API_KEY", "not-needed")
+LLM_TEMPERATURE      = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+LLM_MAX_TOKENS       = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+
+# Embeddings — remote BGE-M3 server
+EMBEDDINGS_BASE_URL  = os.getenv("EMBEDDINGS_BASE_URL", "http://192.168.130.177:8081/v1")
+EMBEDDINGS_MODEL     = os.getenv("EMBEDDINGS_MODEL", "BAAI/bge-m3")
+EMBEDDINGS_API_KEY   = os.getenv("EMBEDDINGS_API_KEY", "not-needed")
+EMBEDDINGS_DIMS      = int(os.getenv("EMBEDDINGS_DIMENSIONS", "1024"))
+
+# Reranker — remote BGE-Reranker server
+RERANK_BASE_URL      = os.getenv("RERANK_BASE_URL", "http://192.168.130.177:8082/v1")
+RERANK_MODEL         = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_API_KEY       = os.getenv("RERANK_API_KEY", "not-needed")
+
+EMBED_MODEL  = EMBEDDINGS_MODEL   # alias used throughout the file
+JUDGE_MODEL  = LLM_MODEL
+GEN_MODEL    = LLM_MODEL
 
 # ── LangChain / FAISS ─────────────────────────────────────────────────────────
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -188,54 +202,72 @@ examples in feature space. The choice of k and distance metric heavily influence
 def get_ragas_judge():
     """
     Returns a RAGAS-compatible LLM object for use as the evaluation judge.
-    Priority: Mistral → OpenRouter → None
-    Uses LangchainLLMWrapper with ChatMistralAI (langchain_mistralai).
+    Priority: Local Ollama (OPENAI_BASE_URL) → OpenRouter → None
+    Uses LangchainLLMWrapper with ChatOpenAI pointed at the local Ollama server.
     """
 
+    # ── Option 0: Local Ollama via OpenAI-compatible API (primary) ───────────
+    try:
+        from langchain_openai import ChatOpenAI
+        from ragas.llms import LangchainLLMWrapper
+        raw = ChatOpenAI(
+            model=JUDGE_MODEL,
+            base_url=LLM_BASE_URL,
+            api_key=LLM_API_KEY,
+            temperature=0,
+            max_tokens=LLM_MAX_TOKENS,
+        )
+        raw.invoke("Reply with one word: ok")
+        wrapped = LangchainLLMWrapper(raw)
+        print(f"  [judge] {JUDGE_MODEL} @ {LLM_BASE_URL} ready (LangchainLLMWrapper)")
+        return wrapped
+    except Exception as e:
+        print(f"  [judge] Local Ollama judge failed ({e}), trying OpenRouter...")
+
     # ── Option 1: Mistral via LangchainLLMWrapper ─────────────────────────
-    if MISTRAL_API_KEY:
-        try:
-            from langchain_mistralai import ChatMistralAI
-            from ragas.llms import llm_factory, LangchainLLMWrapper
+    # if MISTRAL_API_KEY:
+    #     try:
+    #         from langchain_mistralai import ChatMistralAI
+    #         from ragas.llms import llm_factory, LangchainLLMWrapper
 
-            raw = ChatMistralAI(
-                model=JUDGE_MODEL,
-                mistral_api_key=MISTRAL_API_KEY,
-                temperature=0,
-            )
-            # Sync smoke-test
-            raw.invoke("Reply with one word: ok")
-            wrapped = LangchainLLMWrapper(raw)
-            print(f"  [judge] Mistral {JUDGE_MODEL} ready (LangchainLLMWrapper)")
-            return wrapped
-        except Exception as e:
-            print(f"  [judge] Mistral failed ({e}), trying OpenRouter...")
+    #         raw = ChatMistralAI(
+    #             model=JUDGE_MODEL,
+    #             mistral_api_key=MISTRAL_API_KEY,
+    #             temperature=0,
+    #         )
+    #         # Sync smoke-test
+    #         raw.invoke("Reply with one word: ok")
+    #         wrapped = LangchainLLMWrapper(raw)
+    #         print(f"  [judge] Mistral {JUDGE_MODEL} ready (LangchainLLMWrapper)")
+    #         return wrapped
+    #     except Exception as e:
+    #         print(f"  [judge] Mistral failed ({e}), trying OpenRouter...")
 
-    # ── Option 2: OpenRouter via LangchainLLMWrapper ──────────────────────
-    if OPENROUTER_API_KEY:
-        try:
-            from langchain_openai import ChatOpenAI
-            from ragas.llms import LangchainLLMWrapper
-
-            raw = ChatOpenAI(
-                model="stepfun/step-3.5-flash:free",
-                openai_api_key=OPENROUTER_API_KEY,
-                openai_api_base="https://openrouter.ai/api/v1",
-                temperature=0,
-                request_timeout=60,
-                default_headers={
-                    "HTTP-Referer": "https://novamind.app",
-                    "X-Title": "NovaMind RAG Eval",
-                },
-            )
-            test = raw.invoke("Reply with one word: ok")
-            if not test or not test.content:
-                raise ValueError("Empty response from OpenRouter")
-            wrapped = LangchainLLMWrapper(raw)
-            print("  [judge] OpenRouter ready (LangchainLLMWrapper + headers)")
-            return wrapped
-        except Exception as e:
-            print(f"  [judge] OpenRouter failed ({e})")
+    # ── Option 2: OpenRouter (disabled) ────────────────────────────────────
+    # if OPENROUTER_API_KEY:
+    #     try:
+    #         from langchain_openai import ChatOpenAI
+    #         from ragas.llms import LangchainLLMWrapper
+    #
+    #         raw = ChatOpenAI(
+    #             model="stepfun/step-3.5-flash:free",
+    #             openai_api_key=OPENROUTER_API_KEY,
+    #             openai_api_base="https://openrouter.ai/api/v1",
+    #             temperature=0,
+    #             request_timeout=60,
+    #             default_headers={
+    #                 "HTTP-Referer": "https://novamind.app",
+    #                 "X-Title": "NovaMind RAG Eval",
+    #             },
+    #         )
+    #         test = raw.invoke("Reply with one word: ok")
+    #         if not test or not test.content:
+    #             raise ValueError("Empty response from OpenRouter")
+    #         wrapped = LangchainLLMWrapper(raw)
+    #         print("  [judge] OpenRouter ready (LangchainLLMWrapper + headers)")
+    #         return wrapped
+    #     except Exception as e:
+    #         print(f"  [judge] OpenRouter failed ({e})")
 
     print("  [judge] WARNING: No judge LLM available — LLM metrics will be n/a")
     return None
@@ -243,32 +275,52 @@ def get_ragas_judge():
 
 def get_ragas_embeddings():
     """
-    Tries RAGAS native HuggingFaceEmbeddings first, falls back to LangChain.
+    Uses the remote BGE-M3 embeddings server (EMBEDDINGS_BASE_URL) via
+    OpenAIEmbeddings with a custom base_url. Falls back to local HuggingFace.
     """
+    # ── Primary: remote BGE-M3 via OpenAI-compatible embeddings API ──────────
     try:
-        from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbed
-        emb = RagasHFEmbed(model=EMBED_MODEL)
-        print("  [embed] RAGAS native HuggingFaceEmbeddings ready")
-        return emb
-    except Exception:
-        pass
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings as LCHFEmbed
+        from langchain_openai import OpenAIEmbeddings
         from ragas.embeddings import LangchainEmbeddingsWrapper
-        emb = LangchainEmbeddingsWrapper(LCHFEmbed(model_name=EMBED_MODEL))
-        print("  [embed] langchain-huggingface embeddings ready")
-        return emb
-    except Exception:
-        pass
-    # Final fallback — deprecated but functional
-    from ragas.embeddings import LangchainEmbeddingsWrapper
-    emb = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(
-        model_name=EMBED_MODEL,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    ))
-    print("  [embed] LangChain HuggingFaceEmbeddings ready (fallback)")
-    return emb
+        emb = OpenAIEmbeddings(
+            model=EMBEDDINGS_MODEL,
+            base_url=EMBEDDINGS_BASE_URL,
+            api_key=EMBEDDINGS_API_KEY or "not-needed",
+        )
+        # Smoke-test
+        emb.embed_query("test")
+        wrapped = LangchainEmbeddingsWrapper(emb)
+        print(f"  [embed] Remote BGE-M3 @ {EMBEDDINGS_BASE_URL} ready")
+        return wrapped
+    except Exception as e:
+        print(f"  [embed] Remote embeddings failed ({e})")
+        return None
+
+    # ── HuggingFace fallbacks (disabled) ─────────────────────────────────
+    # try:
+    #     from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbed
+    #     emb = RagasHFEmbed(model=EMBED_MODEL)
+    #     print("  [embed] RAGAS native HuggingFaceEmbeddings ready")
+    #     return emb
+    # except Exception:
+    #     pass
+    # try:
+    #     from langchain_huggingface import HuggingFaceEmbeddings as LCHFEmbed
+    #     from ragas.embeddings import LangchainEmbeddingsWrapper
+    #     emb = LangchainEmbeddingsWrapper(LCHFEmbed(model_name=EMBED_MODEL))
+    #     print("  [embed] langchain-huggingface embeddings ready")
+    #     return emb
+    # except Exception:
+    #     pass
+    # # Final fallback — deprecated but functional
+    # from ragas.embeddings import LangchainEmbeddingsWrapper
+    # emb = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(
+    #     model_name=EMBED_MODEL,
+    #     model_kwargs={"device": "cpu"},
+    #     encode_kwargs={"normalize_embeddings": True},
+    # ))
+    # print("  [embed] LangChain HuggingFaceEmbeddings ready (fallback)")
+    # return emb
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -287,61 +339,82 @@ def get_langfuse():
 # GENERATION LLM  (same as chatservice.py — Gemini primary, OpenRouter fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def generate_with_mistral(system_prompt: str, question: str) -> str:
-    from langchain_mistralai import ChatMistralAI
-    llm = ChatMistralAI(
-        model=GEN_MODEL,
-        mistral_api_key=MISTRAL_API_KEY,
-        temperature=0.2,
-    )
-    return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
+# def generate_with_mistral(system_prompt: str, question: str) -> str:
+#     from langchain_mistralai import ChatMistralAI
+#     llm = ChatMistralAI(
+#         model=GEN_MODEL,
+#         mistral_api_key=MISTRAL_API_KEY,
+#         temperature=0.2,
+#     )
+#     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
 
-def generate_with_openrouter(system_prompt: str, question: str) -> str:
+# def generate_with_openrouter(system_prompt: str, question: str) -> str:
+#     from langchain_openai import ChatOpenAI
+#     llm = ChatOpenAI(
+#         model="stepfun/step-3.5-flash:free",
+#         openai_api_key=OPENROUTER_API_KEY,
+#         openai_api_base="https://openrouter.ai/api/v1",
+#         temperature=0.2,
+#     )
+#     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
+
+# from langchain_community.chat_models import ChatOllama
+
+# def generate_with_ollama(system_prompt: str, question: str) -> str:
+#
+#     llm = ChatOllama(
+#         model="llama3.2:latest",
+#         temperature=0.2,
+#     )
+#
+#     return llm.invoke(
+#         f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
+#     ).content.strip()
+
+def generate_with_openai(system_prompt: str, question: str) -> str:
     from langchain_openai import ChatOpenAI
     llm = ChatOpenAI(
-        model="stepfun/step-3.5-flash:free",
-        openai_api_key=OPENROUTER_API_KEY,
-        openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.2,
+        model=GEN_MODEL,
+        base_url=LLM_BASE_URL,
+        api_key=LLM_API_KEY,
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
     )
     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
-def generate_with_ollama(system_prompt: str, question: str) -> str:
-    from langchain_community.chat_models import ChatOllama
-
-    llm = ChatOllama(
-        model="llama3.2:latest",
-        temperature=0.2,
-    )
-
-    return llm.invoke(
-        f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:"
-    ).content.strip()
-
 def generate_answer(system_prompt: str, question: str) -> str:
-    # ── 1. Mistral  ────────────────────────────────────
-    if MISTRAL_API_KEY:
-        try:
-            llm = "mistral-small-latest"
-            answer = generate_with_mistral(system_prompt, question)
-            return answer,llm
-        except Exception as e:
-            print(f"  [gen] Mistral failed ({e}), trying OpenRouter...")
-    # ── 2. Ollama (llama3.2:latest) ─────────────────────────────────
+
+    #Openai 1
     try:
-        llm="llama3.2:latest"
-        answer = generate_with_ollama(system_prompt, question)
+        llm = os.getenv("LLM_MODEL")
+        answer = generate_with_openai(system_prompt, question)
         return answer,llm
     except Exception as e:
-        print(f"  [gen] Ollama failed ({e}), trying OpenRouter...")
-    # ── 3. OpenRouter ──────────────────────────
-    try:
-        llm="stepfun/step-3.5-flash:free"
-        answer = generate_with_openrouter(system_prompt, question)
-        return answer,llm
-    except Exception as e:
-            print(f"  [gen] OpenRouter failed ({e}), trying Ollama...")
+        print(f"  [gen] OpenAI failed ({e}), trying Mistral...")
+
+    # ── 1. Mistral (disabled) ──────────────────────────
+    # if MISTRAL_API_KEY:
+    #     try:
+    #         llm = "mistral-small-latest"
+    #         answer = generate_with_mistral(system_prompt, question)
+    #         return answer,llm
+    #     except Exception as e:
+    #         print(f"  [gen] Mistral failed ({e}), trying OpenRouter...")
+    # ── 2. Ollama llama3.2 (disabled) ───────────────────
+    # try:
+    #     llm="llama3.2:latest"
+    #     answer = generate_with_ollama(system_prompt, question)
+    #     return answer,llm
+    # except Exception as e:
+    #     print(f"  [gen] Ollama failed ({e}), trying OpenRouter...")
+    # ── 3. OpenRouter (disabled) ────────────────────────
+    # try:
+    #     llm="stepfun/step-3.5-flash:free"
+    #     answer = generate_with_openrouter(system_prompt, question)
+    #     return answer,llm
+    # except Exception as e:
+    #     print(f"  [gen] OpenRouter failed ({e}), trying Ollama...")
 
     return "ERROR: No LLM available for generation.",""
 
@@ -389,10 +462,12 @@ class RAGPipeline:
         self.use_parent_doc = use_parent_doc
         self.use_hybrid=use_hybrid
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=embed_model,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+        # Remote BGE-M3 embeddings via OpenAI-compatible API
+        from langchain_openai import OpenAIEmbeddings
+        self.embeddings = OpenAIEmbeddings(
+            model=EMBEDDINGS_MODEL,
+            base_url=EMBEDDINGS_BASE_URL,
+            api_key=EMBEDDINGS_API_KEY or 'not-needed',
         )
         self.vectorstore = None
         if self.use_cross_encoder:
@@ -834,49 +909,49 @@ def log_to_langfuse(lf, experiment_name, config, results, ragas_scores):
 EXPERIMENT_GRID = [
     # top_k
     (1000, 200, 6, False, False, False, False, False, False,  False, "top_k=6"),
-    (1000, 200, 8, False, False, False, False, False,False,  False, "top_k=8"),
-    (1000, 200, 10, False, False, False, False, False, False, False, "top_k=10"),
+    # (1000, 200, 8, False, False, False, False, False,False,  False, "top_k=8"),
+    # (1000, 200, 10, False, False, False, False, False, False, False, "top_k=10"),
 
-    #SEMANTIC RERANKER
-    (1000, 200, 6, False, True, False, False, False, False, False, "semantic_reranker_top_k=6"),
-    (1000, 200, 8, False, True, False, False, False, False, False, "semantic_reranker_top_k=8"),
-    (1000, 200, 10, False, True, False, False, False, False, False, "semantic_reranker_top_k=10"),
+    # #SEMANTIC RERANKER
+    # (1000, 200, 6, False, True, False, False, False, False, False, "semantic_reranker_top_k=6"),
+    # (1000, 200, 8, False, True, False, False, False, False, False, "semantic_reranker_top_k=8"),
+    # (1000, 200, 10, False, True, False, False, False, False, False, "semantic_reranker_top_k=10"),
 
-    # CROSS-ENCODER
-    (1000, 200, 6, False, False, True, False, False, False, False, "cross_encoder_top_k=6"),
-    (1000, 200, 8, False, False, True, False, False, False, False, "cross_encoder_top_k=8"),
-    (1000, 200, 10, False, False, True, False, False,False, False,  "cross_encoder_top_k=10"),
+    # # CROSS-ENCODER
+    # (1000, 200, 6, False, False, True, False, False, False, False, "cross_encoder_top_k=6"),
+    # (1000, 200, 8, False, False, True, False, False, False, False, "cross_encoder_top_k=8"),
+    # (1000, 200, 10, False, False, True, False, False,False, False,  "cross_encoder_top_k=10"),
 
-    # MULTI-QUERY
-    (1000, 200, 6, False, False, False, True, False, False, False, "multiquery_top_k=6"),
-    (1000, 200, 8, False, False, False, True, False, False, False, "multiquery_top_k=8"),
-    (1000, 200, 10, False, False, False, True, False, False, False, "multiquery_top_k=10"),
+    # # MULTI-QUERY
+    # (1000, 200, 6, False, False, False, True, False, False, False, "multiquery_top_k=6"),
+    # (1000, 200, 8, False, False, False, True, False, False, False, "multiquery_top_k=8"),
+    # (1000, 200, 10, False, False, False, True, False, False, False, "multiquery_top_k=10"),
 
-    # POST-PROCESSING
-    (1000, 200, 6, False, False, False, False, True, False, False, "postprocess_top_k=6"),
-    (1000, 200, 8, False, False, False, False, True, False, False, "postprocess_top_k=8"),
-    (1000, 200, 10, False, False, False, False, True, False, False, "postprocess_top_k=10"),
+    # # POST-PROCESSING
+    # (1000, 200, 6, False, False, False, False, True, False, False, "postprocess_top_k=6"),
+    # (1000, 200, 8, False, False, False, False, True, False, False, "postprocess_top_k=8"),
+    # (1000, 200, 10, False, False, False, False, True, False, False, "postprocess_top_k=10"),
 
-    # COMBINATIONS 🔥
-    (1000, 200, 6, False, False, True, True, False, False, False, "cross+multi_top_k=6"),
-    (1000, 200, 8, False, False, True, True, False, False, False, "cross+multi_top_k=8"),
-    (1000, 200, 10, False, False, True, True, False, False, False, "cross+multi_top_k=10"),
+    # # COMBINATIONS 🔥
+    # (1000, 200, 6, False, False, True, True, False, False, False, "cross+multi_top_k=6"),
+    # (1000, 200, 8, False, False, True, True, False, False, False, "cross+multi_top_k=8"),
+    # (1000, 200, 10, False, False, True, True, False, False, False, "cross+multi_top_k=10"),
 
-    (1000, 200, 6, False, False, True, False, True, False, False, "cross+post_top_k=6"),
-    (1000, 200, 8, False, False, True, False, True, False, False, "cross+post_top_k=8"),
-    (1000, 200, 10, False, False, True, False, True, False, False, "cross+post_top_k=10"),
+    # (1000, 200, 6, False, False, True, False, True, False, False, "cross+post_top_k=6"),
+    # (1000, 200, 8, False, False, True, False, True, False, False, "cross+post_top_k=8"),
+    # (1000, 200, 10, False, False, True, False, True, False, False, "cross+post_top_k=10"),
 
-    (1000, 200, 6, False, False, True, True, True, False, False, "full_pipeline_top_k=6"),
-    (1000, 200, 8, False, False, True, True, True, False, False, "full_pipeline_top_k=8"),
-    (1000, 200, 10, False, False, True, True, True, False, False, "full_pipeline_top_k=10"),
+    # (1000, 200, 6, False, False, True, True, True, False, False, "full_pipeline_top_k=6"),
+    # (1000, 200, 8, False, False, True, True, True, False, False, "full_pipeline_top_k=8"),
+    # (1000, 200, 10, False, False, True, True, True, False, False, "full_pipeline_top_k=10"),
 
-    (1000, 200, 4, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=4"),
-    (1000, 200, 8, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=8"),
-    (1000, 200, 10, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=10"),
+    # (1000, 200, 4, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=4"),
+    # (1000, 200, 8, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=8"),
+    # (1000, 200, 10, False, False, False, False, False, True, False, "parent_doc_rerank_top_k=10"),
 
-    (1000, 200, 6, False, False, False, False, False, False, True, "hybrid_topk6"),
-    (1000, 200, 8, False, False, False, False, False, False, True, "hybrid_topk8"),
-    (1000, 200, 10, False, False, False, False, False, False, True, "hybrid_topk10"),
+    # (1000, 200, 6, False, False, False, False, False, False, True, "hybrid_topk6"),
+    # (1000, 200, 8, False, False, False, False, False, False, True, "hybrid_topk8"),
+    # (1000, 200, 10, False, False, False, False, False, False, True, "hybrid_topk10"),
 
 ]
 

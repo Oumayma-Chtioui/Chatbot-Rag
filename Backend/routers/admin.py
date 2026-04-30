@@ -551,10 +551,10 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
 
 
 # ── /admin/system ─────────────────────────────────────────────────────────────
+import os
 
 @router.get("/system")
 def admin_system(admin=Depends(require_admin)):
-    import os
     from config import UPLOAD_DIR
 
     mongo_collections = []
@@ -884,3 +884,38 @@ def get_all_documents(admin=Depends(require_admin)):
     from database import documents_collection
     docs = list(documents_collection.find({}, {"_id": 0}).limit(500))
     return {"documents": docs}
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: str,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Clean up related data
+    bots = db.query(WidgetBot).filter_by(owner_id=user_id).all()
+    bot_ids = [b.id for b in bots]
+
+    if bot_ids:
+        try:
+            mongodb["widget_messages"].delete_many({"bot_id": {"$in": bot_ids}})
+            mongodb["widget_feedback"].delete_many({"bot_id": {"$in": bot_ids}})
+        except Exception:
+            pass
+
+        # Delete FAISS indexes
+        import shutil
+        vector_root = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}")
+        if os.path.exists(vector_root):
+            shutil.rmtree(vector_root, ignore_errors=True)
+
+    db.query(WidgetApiKey).filter(WidgetApiKey.bot_id.in_(bot_ids)).delete(synchronize_session=False)
+    db.query(WidgetBot).filter_by(owner_id=user_id).delete(synchronize_session=False)
+    db.query(Subscription).filter_by(owner_id=user_id).delete(synchronize_session=False)
+    db.delete(user)
+    db.commit()
+
+    return {"ok": True, "deleted": user_id}

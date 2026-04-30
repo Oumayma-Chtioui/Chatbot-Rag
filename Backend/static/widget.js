@@ -1,4 +1,3 @@
-
 (function () {
   const CONFIG   = window.NovaMindConfig || {};
   const API_KEY  = CONFIG.apiKey   || "";
@@ -12,7 +11,7 @@
     return;
   }
 
-  let sessionId = sessionStorage.getItem("nm_session") || null;
+  let sessionId = null;
   let isOpen    = false;
 
   /* ── Shadow DOM host ── */
@@ -34,15 +33,13 @@
   fetch(`${API_BASE}/static/widget.css`)
     .then(res => res.text())
     .then(cssText => {
-      const accentOverride = `
-        :host { --accent: ${ACCENT}; }
-      `;
+      const accentOverride = `:host { --accent: ${ACCENT}; }`;
       const style = document.createElement("style");
       style.textContent = accentOverride + cssText;
       shadow.appendChild(style);
     });
 
-  /* ── HTML template (no style block needed) ── */
+  /* ── HTML template ── */
   const side  = POSITION.includes("right") ? "right: 24px;" : "left: 24px;";
   const vside = POSITION.includes("bottom") ? "bottom:" : "top:";
 
@@ -67,7 +64,6 @@
     </div>
   `;
 
-  // Append nodes into shadow
   while (template.firstChild) {
     shadow.appendChild(template.firstChild);
   }
@@ -96,21 +92,33 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
+  /* ── Render markdown helper ── */
+  function renderMarkdown(text) {
+    if (markedReady) return marked.parse(text);
+    return text
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      .replace(/\n/g, "<br>");
+  }
+
   /* ── Message helpers ── */
   function appendMsg(text, role) {
     const el = document.createElement("div");
     el.className = `nm-msg nm-${role}`;
-
     if (role === "bot") {
-        el.innerHTML = markedReady
-            ? marked.parse(text)
-            : text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")  // fallback
-                  .replace(/\*(.*?)\*/g, "<em>$1</em>")
-                  .replace(/\n/g, "<br>");
+      el.innerHTML = renderMarkdown(text);
     } else {
       el.textContent = text;
     }
+    messages.appendChild(el);
+    messages.scrollTop = messages.scrollHeight;
+    return el;
+  }
 
+  /* ── Create an empty streaming bot bubble ── */
+  function createStreamingBubble() {
+    const el = document.createElement("div");
+    el.className = "nm-msg nm-bot";
     messages.appendChild(el);
     messages.scrollTop = messages.scrollHeight;
     return el;
@@ -218,7 +226,7 @@
     messages.scrollTop = messages.scrollHeight;
   }
 
-  /* ── Send message ── */
+  /* ── Send message (streaming) ── */
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
@@ -228,28 +236,76 @@
     sendBtn.disabled = true;
     appendMsg(text, "user");
 
+    // Show typing indicator while waiting for first token
     const typing = appendMsg("…", "typing");
 
     try {
-      const res = await fetch(`${API_BASE}/widget/chat`, {
+      const res = await fetch(`${API_BASE}/widget/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
         body: JSON.stringify({ message: text, session_id: sessionId }),
       });
 
-      const data = await res.json();
-      sessionId = data.session_id;
-      sessionStorage.setItem("nm_session", sessionId);
+      if (!res.ok) {
+        throw new Error(`Server error ${res.status}`);
+      }
 
       typing.remove();
-      appendMsg(data.answer, "bot");
 
-      if (data.answered === false && !nmIntervention.active) {
+      const botBubble = createStreamingBubble();
+      const reader    = res.body.getReader();
+      const decoder   = new TextDecoder();
+      let   rawText   = "";   // accumulate plain text for markdown re-render
+      let   answered  = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+
+        // Sources metadata arrives as a tagged suffix — split it out
+        if (chunk.includes("__SOURCES__:")) {
+          const [textPart, sourcePart] = chunk.split("__SOURCES__:");
+
+          if (textPart) {
+            rawText += textPart;
+            botBubble.innerHTML = renderMarkdown(rawText);
+            messages.scrollTop = messages.scrollHeight;
+          }
+
+          try {
+            const sources = JSON.parse(sourcePart.trim());
+            // store on bubble for potential future use (e.g. show sources panel)
+            botBubble.dataset.sources = JSON.stringify(sources);
+          } catch (_) { /* ignore parse errors */ }
+
+          answered = rawText.trim().length > 0;
+
+        } else {
+          // Regular token — append and re-render markdown live
+          rawText += chunk;
+          botBubble.innerHTML = renderMarkdown(rawText);
+          messages.scrollTop = messages.scrollHeight;
+        }
+      }
+
+      // Update session id if returned in a header
+      const newSession = res.headers.get("X-Session-Id");
+      if (newSession) {
+        sessionId = newSession;
+        sessionStorage.setItem("nm_session", sessionId);
+      }
+      const cantAnswer = rawText.trim().toLowerCase().includes("i don't have enough information");
+
+      if ((!answered || cantAnswer) && !nmIntervention.active) {
         showInterventionOffer(text);
       }
-    } catch {
+
+    } catch (err) {
       typing.remove();
       appendMsg("Erreur de connexion. Réessayez.", "bot");
+      console.error("[NovaMind stream error]", err);
     } finally {
       sendBtn.disabled = false;
       input.focus();

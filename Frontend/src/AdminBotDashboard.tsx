@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  AreaChart, Area,
+  XAxis, YAxis,
+  Tooltip, ResponsiveContainer,
+} from "recharts";
 import * as api from "./api";
 
 interface Props {
@@ -16,108 +21,77 @@ const TABS = [
 type Tab = typeof TABS[number]["key"];
 
 // ── Period filter ─────────────────────────────────────────────────────────────
-const PERIODS = [
-  { label: "7d",  value: 7  },
-  { label: "30d", value: 30 },
-  { label: "90d", value: 90 },
-] as const;
-type Period = typeof PERIODS[number]["value"];
+type Period = "week" | "month" | "year";
 
-// ── Dual-line SVG chart ───────────────────────────────────────────────────────
+// ── Chart helpers ─────────────────────────────────────────────────────────────
 type ChartPoint = { date: string; messages: number; sessions: number };
 
-function DualLineChart({ data }: { data: ChartPoint[] }) {
-  const W = 560, H = 150;
-  const PAD = { top: 14, right: 12, bottom: 26, left: 34 };
-  const iW = W - PAD.left - PAD.right;
-  const iH = H - PAD.top - PAD.bottom;
-  const n  = data.length;
+function fmt(d: Date, opts: Intl.DateTimeFormatOptions) {
+  return d.toLocaleDateString("en-US", opts);
+}
 
-  if (!n) return (
-    <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: 12 }}>
-      No data available
+function buildMsgChartData(
+  raw: { date: string; count: number }[],
+  period: Period,
+  offset: number
+): { label: string; messages: number }[] {
+  const today = new Date();
+  const rawMap: Record<string, number> = {};
+  raw.forEach(r => { rawMap[r.date.slice(0, 10)] = r.count; });
+
+  if (period === "week") {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return { label: fmt(d, { weekday: "short" }), messages: rawMap[d.toISOString().slice(0, 10)] ?? 0 };
+    });
+  }
+  if (period === "month") {
+    const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const days = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+    return Array.from({ length: days }, (_, i) => {
+      const d = new Date(ref.getFullYear(), ref.getMonth(), i + 1);
+      return { label: `${i + 1}`, messages: rawMap[d.toISOString().slice(0, 10)] ?? 0 };
+    });
+  }
+  const year = today.getFullYear() + offset;
+  return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((label, m) => ({
+    label,
+    messages: raw
+      .filter(r => { const d = new Date(r.date); return d.getFullYear() === year && d.getMonth() === m; })
+      .reduce((s, r) => s + r.count, 0),
+  }));
+}
+
+function periodLabel(period: Period, offset: number): string {
+  const today = new Date();
+  if (period === "week") {
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return `${fmt(start, { month: "short", day: "numeric" })} – ${fmt(end, { month: "short", day: "numeric" })}`;
+  }
+  if (period === "month") {
+    const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    return fmt(ref, { month: "long", year: "numeric" });
+  }
+  return String(today.getFullYear() + offset);
+}
+
+const MsgTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}>
+      <div style={{ color: "var(--text3)", marginBottom: 2 }}>{label}</div>
+      <div style={{ color: "#AFA9EC", fontWeight: 500 }}>{payload[0].value} messages</div>
     </div>
   );
-
-  const allVals = data.flatMap(d => [d.messages, d.sessions]);
-  const maxVal  = Math.max(...allVals, 1);
-
-  const x = (i: number) => PAD.left + (n === 1 ? iW / 2 : (i / (n - 1)) * iW);
-  const y = (v: number) => PAD.top + iH - (v / maxVal) * iH;
-
-  const pts = (key: "messages" | "sessions") =>
-    data.map((d, i) => `${x(i)},${y(d[key])}`).join(" ");
-
-  const area = (key: "messages" | "sessions") =>
-    `${x(0)},${PAD.top + iH} ${pts(key)} ${x(n - 1)},${PAD.top + iH}`;
-
-  const ticks = [0, 0.5, 1].map(t => Math.round(t * maxVal));
-
-  // Show at most ~8 x-labels
-  const step = Math.max(1, Math.ceil(n / 8));
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", overflow: "visible" }}>
-      <defs>
-        <linearGradient id="gMsg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#7f77dd" stopOpacity="0.22" />
-          <stop offset="100%" stopColor="#7f77dd" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id="gSes" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#34d399" stopOpacity="0.18" />
-          <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-
-      {/* Grid */}
-      {ticks.map((tick, i) => (
-        <g key={i}>
-          <line x1={PAD.left} x2={PAD.left + iW} y1={y(tick)} y2={y(tick)}
-            stroke="var(--border)" strokeWidth="1" strokeDasharray="3 3" />
-          <text x={PAD.left - 6} y={y(tick) + 4} fill="var(--text3)" fontSize="9" textAnchor="end">
-            {tick}
-          </text>
-        </g>
-      ))}
-
-      {/* Areas */}
-      <polygon points={area("messages")} fill="url(#gMsg)" />
-      <polygon points={area("sessions")} fill="url(#gSes)" />
-
-      {/* Lines */}
-      <polyline points={pts("messages")} fill="none" stroke="#7f77dd" strokeWidth="2"
-        strokeLinejoin="round" strokeLinecap="round" />
-      <polyline points={pts("sessions")} fill="none" stroke="#34d399" strokeWidth="2"
-        strokeLinejoin="round" strokeLinecap="round" />
-
-      {/* Dots + x-labels */}
-      {data.map((d, i) => (
-        <g key={i}>
-          <circle cx={x(i)} cy={y(d.messages)} r="3" fill="#7f77dd" />
-          <circle cx={x(i)} cy={y(d.sessions)}  r="3" fill="#34d399" />
-          {i % step === 0 && (
-            <text x={x(i)} y={H - 4} fill="var(--text3)" fontSize="8" textAnchor="middle">
-              {d.date.slice(5)}
-            </text>
-          )}
-        </g>
-      ))}
-    </svg>
-  );
-}
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function buildChartData(
-  msgsPerDay: { date: string; count: number }[],
-  sesPerDay:  { date: string; count: number }[],
-  days: number
-): ChartPoint[] {
-  const dateSet = new Set([...msgsPerDay.map(d => d.date), ...sesPerDay.map(d => d.date)]);
-  const sorted  = Array.from(dateSet).sort().slice(-days);
-  const mMap    = Object.fromEntries(msgsPerDay.map(d => [d.date, d.count]));
-  const sMap    = Object.fromEntries(sesPerDay.map(d  => [d.date, d.count]));
-  return sorted.map(date => ({ date, messages: mMap[date] ?? 0, sessions: sMap[date] ?? 0 }));
-}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 function StatCard({ label, value, sub, accent }: { label: string; value: string | number; sub?: string; accent?: string }) {
@@ -179,7 +153,8 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading]     = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [chartPeriod, setChartPeriod] = useState<Period>(30);
+  const [chartPeriod, setChartPeriod] = useState<Period>("week");
+  const [chartOffset, setChartOffset] = useState(0);
 
   const adminToken = () => localStorage.getItem("admin_token");
 
@@ -227,12 +202,8 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
   const owner = bot.owner || {};
 
   // Build chart data from analytics
-  const chartData: ChartPoint[] = analytics
-    ? buildChartData(
-        analytics.messages_per_day  ?? [],
-        analytics.sessions_per_day  ?? [],   // ensure your API returns this
-        chartPeriod
-      )
+  const chartData = analytics
+    ? buildMsgChartData(analytics.messages_per_day ?? [], chartPeriod, chartOffset)
     : [];
 
   return (
@@ -353,48 +324,61 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
           <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "18px 20px" }}>
             {/* Header row */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-                  Activity over time
-                </div>
-                {/* Legend */}
-                <div style={{ display: "flex", gap: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 20, height: 2.5, borderRadius: 2, background: "#7f77dd" }} />
-                    <span style={{ fontSize: 11, color: "var(--text3)" }}>Messages</span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 20, height: 2.5, borderRadius: 2, background: "#34d399" }} />
-                    <span style={{ fontSize: 11, color: "var(--text3)" }}>Sessions opened</span>
-                  </div>
-                </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                Messages over time
               </div>
-
-              {/* Period pills */}
-              <div style={{
-                display: "flex", gap: 3, background: "var(--bg3, var(--bg))",
-                borderRadius: 8, padding: 3, border: "1px solid var(--border)",
-              }}>
-                {PERIODS.map(p => (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {/* Period pills */}
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["week", "month", "year"] as Period[]).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => { setChartPeriod(p); setChartOffset(0); }}
+                      style={{
+                        padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 500,
+                        border: "1px solid",
+                        borderColor: chartPeriod === p ? "var(--accent)" : "var(--border)",
+                        background: chartPeriod === p ? "rgba(127,119,221,0.15)" : "var(--bg3)",
+                        color: chartPeriod === p ? "var(--accent-light, #AFA9EC)" : "var(--text3)",
+                        cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                {/* Nav arrows + label */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button
-                    key={p.value}
-                    onClick={() => setChartPeriod(p.value)}
-                    style={{
-                      padding: "4px 12px", borderRadius: 6, border: "none",
-                      cursor: "pointer", fontSize: 12, fontWeight: 500,
-                      transition: "all 0.15s",
-                      background: chartPeriod === p.value ? "var(--accent)" : "transparent",
-                      color: chartPeriod === p.value ? "#fff" : "var(--text3)",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+                    onClick={() => setChartOffset(o => o - 1)}
+                    style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}
+                  >←</button>
+                  <span style={{ fontSize: 12, color: "var(--text2)", minWidth: 130, textAlign: "center", fontWeight: 500 }}>
+                    {periodLabel(chartPeriod, chartOffset)}
+                  </span>
+                  <button
+                    onClick={() => setChartOffset(o => Math.min(0, o + 1))}
+                    disabled={chartOffset >= 0}
+                    style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text2)", cursor: chartOffset >= 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, opacity: chartOffset >= 0 ? 0.3 : 1 }}
+                  >→</button>
+                </div>
               </div>
             </div>
 
-            <DualLineChart data={chartData} />
+            <ResponsiveContainer width="100%" height={190}>
+              <AreaChart data={chartData} margin={{ left: -10, right: 4 }}>
+                <defs>
+                  <linearGradient id="gMsgAdmin" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#7F77DD" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text3)" }} interval={chartPeriod === "month" ? 4 : 0} />
+                <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={28} />
+                <Tooltip content={<MsgTooltip />} />
+                <Area type="monotone" dataKey="messages" stroke="#7F77DD" fill="url(#gMsgAdmin)" strokeWidth={2} dot={chartPeriod === "week"} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>

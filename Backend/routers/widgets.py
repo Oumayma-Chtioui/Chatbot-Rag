@@ -225,7 +225,80 @@ def revoke_key(
     key.is_active = False
     db.commit()
     return {"ok": True, "revoked": key_id}
+@router.delete("/bots/{bot_id}/memory")
+def clear_bot_memory(
+    bot_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Deletes ALL data related to a bot:
+    - FAISS memory (per session)
+    - MongoDB chat messages
+    - Widget messages
+    - Intervention tickets (optional)
+    """
 
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    deleted = {
+        "faiss_folders": [],
+        "messages": 0,
+        "widget_messages": 0,
+        "tickets": 0
+    }
+    errors = []
+
+    # ─────────────────────────────────────────
+    # 1. DELETE FAISS MEMORY (your existing logic)
+    # ─────────────────────────────────────────
+    vector_root = os.path.join(os.getcwd(), "vector_store", f"user_{bot_id}")
+
+    if os.path.isdir(vector_root):
+        for entry in os.scandir(vector_root):
+            if entry.is_dir() and entry.name.endswith("_memory"):
+                try:
+                    shutil.rmtree(entry.path)
+                    deleted["faiss_folders"].append(entry.name)
+                except Exception as e:
+                    errors.append({"folder": entry.name, "error": str(e)})
+
+    # ─────────────────────────────────────────
+    # 2. DELETE CHAT MESSAGES (messages_collection)
+    # ─────────────────────────────────────────
+    try:
+        result = messages_collection.delete_many({"user_id": bot_id})
+        deleted["messages"] = result.deleted_count
+    except Exception as e:
+        errors.append({"messages_collection": str(e)})
+
+    # ─────────────────────────────────────────
+    # 3. DELETE WIDGET MESSAGES
+    # ─────────────────────────────────────────
+    try:
+        result = mongodb["widget_messages"].delete_many({"bot_id": bot_id})
+        deleted["widget_messages"] = result.deleted_count
+    except Exception as e:
+        errors.append({"widget_messages": str(e)})
+
+    # ─────────────────────────────────────────
+    # 4. DELETE INTERVENTION TICKETS (optional but recommended)
+    # ─────────────────────────────────────────
+    try:
+        result = mongodb["intervention_tickets"].delete_many({"bot_id": bot_id})
+        deleted["tickets"] = result.deleted_count
+    except Exception as e:
+        errors.append({"intervention_tickets": str(e)})
+
+    return {
+        "ok": len(errors) == 0,
+        "deleted": deleted,
+        "errors": errors,
+        "message": "All bot data cleared successfully"
+    }
+ 
 from datetime import datetime, timedelta
 
 @router.get("/bots/{bot_id}/analytics")

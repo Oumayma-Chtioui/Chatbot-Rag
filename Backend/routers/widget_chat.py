@@ -3,6 +3,7 @@ import uuid
 import time
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -10,12 +11,13 @@ from typing import Optional
 from database import get_db, mongodb
 from models.widget import WidgetBot
 from auth.widget_auth import require_api_key
-from services.chatservice import generate_answer
+from services.chatservice import generate_answer, generate_answer_stream
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 import re
+import json
 from collections import Counter
 
 router = APIRouter(prefix="/widget", tags=["Widget Chat"])
@@ -56,20 +58,15 @@ NO_ANSWER_PHRASES = [
 ]
 
 def extract_keywords(text: str) -> list:
-    """Return up to 10 meaningful words from the question."""
     words = re.findall(r"\b[a-zA-ZÀ-ÿ]{3,}\b", text.lower())
     return [w for w in words if w not in STOP_WORDS][:10]
 
-
 def is_question_answered(answer: str) -> bool:
-    """Return False if the answer signals the bot couldn't find relevant info."""
     lower = answer.lower()
     return not any(phrase in lower for phrase in NO_ANSWER_PHRASES)
 
-
 def get_api_key_or_ip(request: Request) -> str:
     return request.headers.get("X-Api-Key") or get_remote_address(request)
-
 
 limiter = Limiter(key_func=get_api_key_or_ip)
 
@@ -79,6 +76,8 @@ class WidgetMessageRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+# ── Non-streaming endpoint (unchanged) ────────────────────────────────────────
+
 @router.post("/chat")
 @limiter.limit("30/minute")
 async def widget_chat(
@@ -86,18 +85,13 @@ async def widget_chat(
     req: WidgetMessageRequest,
     bot: WidgetBot = Depends(require_api_key),
 ):
-    # CORS origin check
     if bot.allowed_origin:
         origin = request.headers.get("origin", "")
         if origin and bot.allowed_origin not in origin:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Origin {origin} not allowed for this widget"
-            )
+            raise HTTPException(status_code=403, detail=f"Origin {origin} not allowed for this widget")
 
     doc_session_id  = f"bot_{bot.id}"
     chat_session_id = req.session_id or f"widget_{uuid.uuid4()}"
-
     t_start = time.monotonic()
 
     try:
@@ -111,26 +105,21 @@ async def widget_chat(
         raise HTTPException(status_code=500, detail=str(e))
 
     response_time_ms = int((time.monotonic() - t_start) * 1000)
-
     answer   = result.get("answer", "")
     answered = is_question_answered(answer)
     keywords = extract_keywords(req.message)
+    sources  = result.get("sources", [])
+    source_names = [
+        (s.get("source", "") if isinstance(s, dict) else str(s)).split("/")[-1]
+        for s in sources if s
+    ]
 
-    sources      = result.get("sources", [])
-    source_names = []
-    for s in sources:
-        name = s.get("source", "") if isinstance(s, dict) else str(s)
-        if name:
-            source_names.append(name.split("/")[-1])
-
-    # ── Analytics write — no answer text stored ────────────────────────────────
     if mongodb is not None:
         try:
             mongodb["widget_messages"].insert_one({
                 "bot_id":           bot.id,
                 "session_id":       chat_session_id,
-                "question":         req.message,   # kept for keywords + unanswered list
-                # "answer" field removed — not needed for any dashboard metric
+                "question":         req.message,
                 "answered":         answered,
                 "keywords":         keywords,
                 "response_time_ms": response_time_ms,
@@ -138,7 +127,7 @@ async def widget_chat(
                 "created_at":       datetime.utcnow(),
             })
         except Exception:
-            pass  # never let analytics failure break the response
+            pass
 
     return {
         "answer":     answer,
@@ -147,4 +136,80 @@ async def widget_chat(
         "answered":   answered,
     }
 
-    
+
+# ── Streaming endpoint ────────────────────────────────────────────────────────
+
+@router.post("/chat/stream")
+@limiter.limit("30/minute")
+async def widget_chat_stream(
+    request: Request,
+    req: WidgetMessageRequest,
+    bot: WidgetBot = Depends(require_api_key),
+):
+    if bot.allowed_origin:
+        origin = request.headers.get("origin", "")
+        if origin and bot.allowed_origin not in origin:
+            raise HTTPException(status_code=403, detail=f"Origin {origin} not allowed for this widget")
+
+    doc_session_id  = f"bot_{bot.id}"
+    chat_session_id = req.session_id or f"widget_{uuid.uuid4()}"
+    t_start         = time.monotonic()
+
+    async def event_stream():
+        full_answer = ""
+        sources     = []
+
+        try:
+            async for chunk in generate_answer_stream(
+                question=req.message,
+                user_id=bot.id,
+                session_id=doc_session_id,
+                memory_session_id=chat_session_id,
+            ):
+                if chunk.startswith("__SOURCES__:"):
+                    try:
+                        sources = json.loads(chunk[len("__SOURCES__:"):])
+                    except Exception:
+                        pass
+                else:
+                    full_answer += chunk
+                    yield chunk
+
+            # Send sources + session_id as final tagged chunk for the widget to parse
+            yield f"\n__SOURCES__:{json.dumps(sources)}"
+            yield f"\n__SESSION__:{chat_session_id}"
+
+        except Exception as e:
+            logging.error(f"[widget stream] {e}")
+            yield f"Erreur de connexion. Réessayez."
+            return
+
+        # ── Analytics (after stream completes) ───────────────────────────────
+        response_time_ms = int((time.monotonic() - t_start) * 1000)
+        answered  = is_question_answered(full_answer)
+        keywords  = extract_keywords(req.message)
+        source_names = [
+            (s.get("source", "") if isinstance(s, dict) else str(s)).split("/")[-1]
+            for s in sources if s
+        ]
+
+        if mongodb is not None:
+            try:
+                mongodb["widget_messages"].insert_one({
+                    "bot_id":           bot.id,
+                    "session_id":       chat_session_id,
+                    "question":         req.message,
+                    "answered":         answered,
+                    "keywords":         keywords,
+                    "response_time_ms": response_time_ms,
+                    "sources":          source_names,
+                    "created_at":       datetime.utcnow(),
+                })
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/plain",
+        headers={"X-Session-Id": chat_session_id},
+    )

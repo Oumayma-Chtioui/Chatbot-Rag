@@ -25,6 +25,8 @@ from services.email_service import (
     send_answer_to_user,
 )
 
+import time
+
 router = APIRouter()
 
 
@@ -39,37 +41,27 @@ def _gen_ticket_id() -> str:
 
 
 def _fetch_chat_history(bot_id: str, session_id: str) -> list:
-    """
-    Fetch the conversation messages for the given session from widget_messages.
-    Returns a list of {"role": "user"|"assistant", "content": str, "created_at": str}
-    ordered oldest → newest, capped at the last 50 exchanges (100 docs).
-    """
     try:
-        raw = list(
-            mongodb["widget_messages"]
-            .find(
-                {"bot_id": bot_id, "session_id": session_id},
-                {"_id": 0, "question": 1, "answer": 1, "created_at": 1},
-            )
-            .sort("created_at", 1)
-            .limit(100)
+        from database import messages_collection
+
+        msgs = list(
+            messages_collection
+            .find({"session_id": session_id})
+            .sort("timestamp", 1)
         )
 
-        history = []
-        for msg in raw:
-            created = msg.get("created_at")
-            ts = created.isoformat() if hasattr(created, "isoformat") else str(created)
+        return [
+            {
+                "role": msg["role"],
+                "content": msg["content"],
+                "created_at": str(msg.get("timestamp"))
+            }
+            for msg in msgs
+        ]
 
-            if msg.get("question"):
-                history.append({"role": "user",      "content": msg["question"], "created_at": ts})
-            if msg.get("answer"):
-                history.append({"role": "assistant", "content": msg["answer"],   "created_at": ts})
-
-        return history
     except Exception as exc:
         print(f"[INTERVENTION] Could not fetch chat history: {exc}")
         return []
-
 
 # ── schemas ───────────────────────────────────────────────────────────────────
 
@@ -178,6 +170,7 @@ def _hydrate_history(ticket: dict) -> dict:
     Mutates and returns the ticket dict.
     """
     if ticket.get("chat_history") is None:
+        
         history = _fetch_chat_history(
             ticket.get("bot_id", ""),
             ticket.get("session_id", ""),
