@@ -339,7 +339,7 @@ def generate_answer(question: str, user_id: str, session_id: str, memory_session
         embeddings  = get_embeddings()
         reformulated = question  #no reformulation for now, as it can cause issues and latency
         db           = load_faiss_cached(VECTOR_PATH, embeddings)
-        docs_with_scores = db.similarity_search_with_score(reformulated, k=6)
+        docs_with_scores = db.similarity_search_with_score(reformulated, k=4)
         docs             = [doc for doc, score in docs_with_scores]
         retrieval_lat    = round(time.time() - t_ret_start, 3)
 
@@ -518,6 +518,22 @@ Context:
 # Streaming RAG pipeline
 # ─────────────────────────────────────────────────────────────
 
+from sentence_transformers import CrossEncoder
+
+_reranker = None
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _reranker
+
+def rerank(query, docs, top_n=3):
+    reranker = get_reranker()
+    pairs = [(query, doc.page_content) for doc in docs]
+    scores = reranker.predict(pairs)
+    ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+    return [doc for doc, _ in ranked[:top_n]]
+
 async def generate_answer_stream(question: str, user_id: str, session_id: str, memory_session_id: str):
     import asyncio
     import json
@@ -555,6 +571,7 @@ async def generate_answer_stream(question: str, user_id: str, session_id: str, m
         retrieval_lat = round(time.time() - t_ret_start, 3)
 
         docs = [doc for doc, _ in docs_with_scores]
+        docs = rerank(question, docs, top_n=3)
 
         if not docs:
             yield "I couldn't find any relevant information in the documents."
@@ -563,17 +580,15 @@ async def generate_answer_stream(question: str, user_id: str, session_id: str, m
         context       = "\n\n".join(doc.page_content for doc in docs)
         history_block = f"\n\nRelevant conversation history:\n{relevant_history}" if relevant_history else ""
 
-        system_prompt = """You are a helpful assistant.
+        system_prompt =f"""You are a helpful assistant.
 - Answer the question based on the provided context.
-- Answer to greetings.
 - Be clear and concise.
-- If the context contains relevant information, use it fully even if partial or implicit
-- If information is genuinely not present in the context, say so clearly
-- Answer in the same language as the question
-- If the context contains no relevant information at all, respond ONLY with the exact phrase: "I don't have enough information to answer this." Do not paraphrase or add anything else.
+- If the context contains relevant information, use it fully even if partial or implicit.
+- If information is genuinely not present, say  exactly: "I don't have enough information to answer this."
+- Answer in the same language as the question.
+
 Context:
-{context}{history_block}
-"""
+{context}{history_block}"""
 
         # ── 2. Stream generation ──────────────────────────────────────────────
         # ── [SERVER] Gemma 4 streaming via Ollama — uncomment when server is available ──

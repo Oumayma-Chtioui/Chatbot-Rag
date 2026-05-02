@@ -1,3 +1,4 @@
+from asyncio.log import logger
 import os
 import faiss
 from typing import List, Optional, Dict
@@ -53,3 +54,32 @@ def get_all_indexes(bot_ids: Optional[List[str]] = None) -> List[Dict]:
             continue
 
     return index_metrics
+
+from langchain_community.vectorstores import FAISS
+
+def remove_vectors_from_disk(user_id, session_id, doc_id_to_remove, embeddings):
+    """
+    Surgically removes vectors from a local FAISS index based on doc_id.
+    """
+    vector_path = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}", f"session_{session_id}")
+    faiss_index_path = os.path.join(vector_path, "index.faiss")
+
+    if not os.path.exists(faiss_index_path):
+        logger.warning(f"No index found at {vector_path}")
+        return
+
+    # Load the index with allow_dangerous_deserialization for local pkl files
+    db = FAISS.load_local(vector_path, embeddings, allow_dangerous_deserialization=True)
+
+    # Find chunks belonging to this document
+    chunks_to_remove = [
+        id for id, doc in db.docstore._dict.items() 
+        if doc.metadata.get("doc_id") == doc_id_to_remove
+    ]
+
+    if chunks_to_remove:
+        db.delete(chunks_to_remove)
+        db.save_local(vector_path)
+        logger.info(f"🗑️ Removed {len(chunks_to_remove)} vectors for {doc_id_to_remove}")
+    else:
+        logger.info(f"No vectors found for doc_id: {doc_id_to_remove}")

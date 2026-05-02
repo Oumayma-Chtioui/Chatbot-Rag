@@ -98,7 +98,7 @@ def load_store(user_id: str, session_id: str):
     
     # Initialize embeddings
     embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
+        model_name="BAAI/bge-base-en-v1.5",
         model_kwargs={'device': 'cpu'},
         encode_kwargs={'normalize_embeddings': True}
     )
@@ -291,7 +291,7 @@ def delete_vector_store(user_id: str, session_id: str):
         return False
     
     try:
-        from services.rag_services import delete_vector_store as rag_delete_vector_store
+        from services.rag_services import delete_session_vectors as rag_delete_vector_store
         if rag_delete_vector_store(user_id, session_id):
             print(f"✅ Successfully deleted vector store")
         

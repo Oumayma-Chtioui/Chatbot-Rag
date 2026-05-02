@@ -140,15 +140,15 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
             doc.metadata.update({
                 "source": source_name,
                 "upload_time": str(datetime.now()),
-                "doc_id": str(uuid.uuid4()),
+                "doc_id": doc_id if doc_id else str(uuid.uuid4()),
                 "user_id": user_id,
                 "session_id": clean_session_id
             })
 
         # ================= CHUNKING =================
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
+            chunk_size=500,
+            chunk_overlap=100
         )
 
         chunks = []
@@ -310,3 +310,25 @@ def delete_session_vectors(user_id: int, session_id: str):
     else:
         logger.warning(f"⚠️  Vector store not found: {VECTOR_PATH}")
         return False
+
+def delete_document_from_index(user_id, session_id, doc_id_to_delete):
+    embeddings = get_embeddings()
+    VECTOR_PATH = f"vector_store/user_{user_id}/session_{session_id}"
+
+    db = FAISS.load_local(VECTOR_PATH, embeddings, allow_dangerous_deserialization=True)
+
+    chunks_to_remove = [
+        id for id, doc in db.docstore._dict.items()
+        if doc.metadata.get("doc_id") == doc_id_to_delete
+    ]
+
+    if chunks_to_remove:
+        db.delete(chunks_to_remove)
+        db.save_local(VECTOR_PATH)
+        
+        # Invalidate cache so next search loads the updated index
+        _faiss_cache.pop(VECTOR_PATH, None)
+        
+        logger.info(f"🗑️ Removed {len(chunks_to_remove)} chunks for doc {doc_id_to_delete}")
+    else:
+        logger.warning("No chunks found for this doc_id.")

@@ -203,24 +203,37 @@ async def add_url_document(
         "status": "processing"
     }
 
+from services.rag_services import load_document, load_url, delete_document_from_index  # add this
+
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str, current_user: UserModel = Depends(get_current_user)):
     doc = documents_collection.find_one({"id": doc_id, "user_id": current_user.id})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # 1. Delete from FAISS vector store
+    session_id = doc.get("session_id", "")
+    clean_session_id = session_id.replace("session_", "").replace("session-", "")
+    
+    try:
+        delete_document_from_index(current_user.id, clean_session_id, doc_id)
+        logger.info(f"✅ Removed vectors for doc: {doc_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to remove vectors: {e}")
+
+    # 2. Delete the physical file
     if doc.get("path") and doc.get("type") != "url":
         file_path = doc["path"]
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
-                logger.info(f"🗑️  Deleted file: {file_path}")
             except Exception as e:
                 logger.error(f"❌ Failed to delete file: {e}")
-    
-    # Delete from database
+
+    # 3. Delete from MongoDB
     documents_collection.delete_one({"id": doc_id})
-    logger.info(f"✅ Deleted document: {doc_id}")
-    
+    logger.info(f"✅ Deleted document record: {doc_id}")
+
     return {"ok": True, "deleted": doc_id}
 
 @router.get("/sessions/{session_id}/documents")

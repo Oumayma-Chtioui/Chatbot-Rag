@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FAISS Web Viewer
-Simple Flask web interface to browse FAISS database
+FAISS Web Viewer - Per-Session Structure
+Flask web interface to browse per-user/per-session FAISS vector stores
 """
 
 from flask import Flask, render_template_string, request, jsonify
@@ -14,397 +14,752 @@ app = Flask(__name__)
 
 # Configuration
 BACKEND_DIR = Path(__file__).parent.absolute()
-VECTOR_PATH = os.path.join(BACKEND_DIR, "vector_store", "faiss_index")
+VECTOR_BASE_PATH = os.path.join(BACKEND_DIR, "vector_store")
 
-# Global database
-db = None
+# Cache for loaded databases: key = "user_id:session_id"
+_db_cache = {}
+_embeddings = None
 
-def load_db():
-    """Load FAISS database"""
-    global db
-    if db is not None:
-        return db
-    
-    if not os.path.exists(VECTOR_PATH):
+def get_embeddings():
+    """Lazy-load embeddings (shared across all stores)"""
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-base-en-v1.5",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+    return _embeddings
+
+
+def discover_vector_stores():
+    """Discover all user/session vector stores"""
+    stores = []
+
+    if not os.path.exists(VECTOR_BASE_PATH):
+        return stores
+
+    for user_dir in sorted(os.listdir(VECTOR_BASE_PATH)):
+        user_path = os.path.join(VECTOR_BASE_PATH, user_dir)
+        if not os.path.isdir(user_path) or not user_dir.startswith("user_"):
+            continue
+
+        user_id = user_dir[len("user_"):]
+
+        for session_dir in sorted(os.listdir(user_path)):
+            session_path = os.path.join(user_path, session_dir)
+            if not os.path.isdir(session_path) or not session_dir.startswith("session_"):
+                continue
+
+            session_id = session_dir[len("session_"):]
+            faiss_index = os.path.join(session_path, "index.faiss")
+            faiss_pkl = os.path.join(session_path, "index.pkl")
+
+            if os.path.exists(faiss_index) and os.path.exists(faiss_pkl):
+                stores.append({
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "path": session_path,
+                    "faiss_size": os.path.getsize(faiss_index),
+                    "pkl_size": os.path.getsize(faiss_pkl),
+                    "key": f"{user_id}:{session_id}"
+                })
+
+    return stores
+
+
+def load_store(user_id: str, session_id: str):
+    """Load (and cache) a specific vector store"""
+    cache_key = f"{user_id}:{session_id}"
+    if cache_key in _db_cache:
+        return _db_cache[cache_key]
+
+    vector_path = os.path.join(VECTOR_BASE_PATH, f"user_{user_id}", f"session_{session_id}")
+    if not os.path.exists(os.path.join(vector_path, "index.faiss")):
         return None
-    
-    embeddings = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={'device': 'cpu'}
-    )
-    
+
     db = FAISS.load_local(
-        VECTOR_PATH,
-        embeddings,
+        vector_path,
+        get_embeddings(),
         allow_dangerous_deserialization=True
     )
-    print("VECTOR PATH:", VECTOR_PATH)
-    print("PATH EXISTS:", os.path.exists(VECTOR_PATH))
+    _db_cache[cache_key] = db
     return db
+
+
+# ── HTML ─────────────────────────────────────────────────────────────────────
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>FAISS Database Viewer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAISS Inspector</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:       #0a0c10;
+            --surface:  #111318;
+            --border:   #1f2330;
+            --accent:   #00e5a0;
+            --accent2:  #0ea5e9;
+            --text:     #d4dbe8;
+            --muted:    #5a6478;
+            --danger:   #f43f5e;
+            --mono: 'IBM Plex Mono', monospace;
+            --sans: 'Syne', sans-serif;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
-            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            min-height: 100vh;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 30px;
-            font-size: 2.5rem;
+
+        /* ── Layout ── */
+        .layout { display: flex; min-height: 100vh; }
+
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+
+        .sidebar-header {
+            padding: 28px 20px 20px;
+            border-bottom: 1px solid var(--border);
         }
-        .stat-card {
-            background: #1e293b;
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid #334155;
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #fff;
         }
-        .stat-value {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 5px;
+
+        .logo span { color: var(--accent); }
+
+        .sidebar-label {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding: 16px 20px 8px;
         }
-        .stat-label { color: #94a3b8; font-size: 0.875rem; }
-        .search-box {
-            background: #1e293b;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 30px;
-            border: 1px solid #334155;
-        }
-        input[type="text"] {
-            width: 100%;
-            padding: 12px;
-            background: #0f172a;
-            border: 1px solid #334155;
-            border-radius: 8px;
-            color: #e2e8f0;
-            font-size: 1rem;
-            margin-bottom: 10px;
-        }
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
+
+        .store-list { flex: 1; overflow-y: auto; padding-bottom: 16px; }
+
+        .store-item {
+            padding: 10px 20px;
             cursor: pointer;
-            font-size: 1rem;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .store-item:hover { background: rgba(0,229,160,0.04); border-left-color: var(--border); }
+        .store-item.active { background: rgba(0,229,160,0.07); border-left-color: var(--accent); }
+
+        .store-user {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            color: var(--accent);
             font-weight: 600;
         }
-        button:hover { opacity: 0.9; }
-        .results { margin-top: 20px; }
-        .document {
-            background: #1e293b;
+
+        .store-session {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 2px;
+        }
+
+        .store-size {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+        .no-stores {
             padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 15px;
-            border: 1px solid #334155;
-        }
-        .doc-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        .doc-title { font-weight: 600; color: #667eea; }
-        .doc-score {
-            background: #334155;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.875rem;
-        }
-        .doc-content {
-            color: #cbd5e1;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: var(--muted);
             line-height: 1.6;
-            margin-bottom: 15px;
         }
-        .doc-metadata {
+
+        /* ── Main ── */
+        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 32px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        .topbar h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: #fff;
+            flex: 1;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .tab-btn {
+            padding: 6px 16px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.15s;
+        }
+
+        .tab-btn.active { background: var(--surface); color: var(--accent); border: 1px solid var(--border); }
+        .tab-btn:hover:not(.active) { color: var(--text); }
+
+        .content { flex: 1; overflow-y: auto; padding: 28px 32px; }
+
+        /* ── Stats ── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+
+        .stat {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px;
+        }
+
+        .stat-val {
+            font-family: var(--mono);
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--accent);
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+
+        .stat-lbl {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* ── Sources ── */
+        .sources-list {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
+            margin-bottom: 28px;
         }
-        .meta-tag {
-            background: #334155;
-            padding: 4px 12px;
+
+        .source-tag {
+            background: var(--surface);
+            border: 1px solid var(--border);
             border-radius: 6px;
-            font-size: 0.75rem;
-            color: #94a3b8;
+            padding: 4px 12px;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--accent2);
         }
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #94a3b8;
-        }
-        .tabs {
+
+        /* ── Search ── */
+        .search-row {
             display: flex;
             gap: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
         }
-        .tab {
-            background: #1e293b;
-            padding: 12px 24px;
+
+        .search-input {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            border: 1px solid #334155;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 0.9rem;
+            padding: 12px 16px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .search-input:focus { border-color: var(--accent); }
+
+        .btn {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 22px;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            font-weight: 600;
             cursor: pointer;
+            transition: opacity 0.15s;
+            white-space: nowrap;
         }
-        .tab.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-color: #667eea;
+
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* ── Documents ── */
+        .doc-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 12px;
+            transition: border-color 0.15s;
         }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
+
+        .doc-card:hover { border-color: #2a3040; }
+
+        .doc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .doc-num {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--muted);
+        }
+
+        .score-badge {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            padding: 3px 10px;
+            border-radius: 20px;
+            background: rgba(0,229,160,0.1);
+            color: var(--accent);
+            border: 1px solid rgba(0,229,160,0.2);
+        }
+
+        .doc-content {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            line-height: 1.7;
+            color: #9baabb;
+            margin-bottom: 14px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .meta-tag {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(14,165,233,0.08);
+            color: var(--accent2);
+            border: 1px solid rgba(14,165,233,0.15);
+        }
+
+        /* ── Empty / Loading ── */
+        .empty {
+            text-align: center;
+            padding: 60px 20px;
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .empty .icon { font-size: 2.5rem; margin-bottom: 12px; }
+
+        .hidden { display: none; }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🔍 FAISS Database Viewer</h1>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value" id="total-vectors">-</div>
-                <div class="stat-label">Total Vectors</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="total-docs">-</div>
-                <div class="stat-label">Documents</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="dimension">-</div>
-                <div class="stat-label">Dimensions</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="sources">-</div>
-                <div class="stat-label">Unique Sources</div>
+<div class="layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">FAISS<span>.</span>Inspector</div>
+        </div>
+        <div class="sidebar-label">Vector Stores</div>
+        <div class="store-list" id="store-list">
+            <div class="no-stores">Loading stores…</div>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+        <div class="topbar">
+            <h2 id="store-title">Select a store</h2>
+            <div class="tabs" id="tabs" style="display:none">
+                <button class="tab-btn active" onclick="switchTab('stats', this)">Stats</button>
+                <button class="tab-btn" onclick="switchTab('search', this)">Search</button>
+                <button class="tab-btn" onclick="switchTab('browse', this)">Browse</button>
             </div>
         </div>
 
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('search')">Search</div>
-            <div class="tab" onclick="switchTab('browse')">Browse All</div>
-        </div>
-
-        <div id="search-tab" class="tab-content active">
-            <div class="search-box">
-                <input type="text" id="query" placeholder="Search your documents..." />
-                <button onclick="search()">🔍 Search</button>
-            </div>
-            <div id="search-results" class="results"></div>
-        </div>
-
-        <div id="browse-tab" class="tab-content">
-            <div id="all-docs" class="results"></div>
-        </div>
-    </div>
-
-    <script>
-        async function loadStats() {
-            const res = await fetch('/api/stats');
-            const data = await res.json();
-            
-            document.getElementById('total-vectors').textContent = data.total_vectors || '0';
-            document.getElementById('total-docs').textContent = data.total_documents || '0';
-            document.getElementById('dimension').textContent = data.dimension || '0';
-            document.getElementById('sources').textContent = data.sources?.length || '0';
-        }
-
-        async function search() {
-            const query = document.getElementById('query').value;
-            if (!query) return;
-
-            const resultsDiv = document.getElementById('search-results');
-            resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
-
-            const res = await fetch('/api/search', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, k: 5 })
-            });
-
-            const data = await res.json();
-            displayResults(data.results, resultsDiv);
-        }
-
-        async function browseAll() {
-            const docsDiv = document.getElementById('all-docs');
-            docsDiv.innerHTML = '<div class="loading">Loading documents...</div>';
-
-            const res = await fetch('/api/list');
-            const data = await res.json();
-            displayDocuments(data.documents, docsDiv);
-        }
-
-        function displayResults(results, container) {
-            if (!results || results.length === 0) {
-                container.innerHTML = '<div class="loading">No results found</div>';
-                return;
-            }
-
-            container.innerHTML = results.map((item, i) => `
-                <div class="document">
-                    <div class="doc-header">
-                        <div class="doc-title">📄 Result #${i + 1}</div>
-                        <div class="doc-score">Score: ${item.score.toFixed(4)}</div>
-                    </div>
-                    <div class="doc-content">${item.content}</div>
-                    <div class="doc-metadata">
-                        ${Object.entries(item.metadata).map(([k, v]) => 
-                            `<span class="meta-tag">${k}: ${v}</span>`
-                        ).join('')}
-                    </div>
+        <div class="content">
+            <!-- Stats tab -->
+            <div id="tab-stats">
+                <div class="empty">
+                    <div class="icon">🗄️</div>
+                    <div>Select a vector store from the sidebar</div>
                 </div>
-            `).join('');
-        }
+            </div>
 
-        function displayDocuments(docs, container) {
-            if (!docs || docs.length === 0) {
-                container.innerHTML = '<div class="loading">No documents found</div>';
-                return;
-            }
-
-            container.innerHTML = docs.map((doc, i) => `
-                <div class="document">
-                    <div class="doc-header">
-                        <div class="doc-title">📄 Document #${i + 1}</div>
-                    </div>
-                    <div class="doc-content">${doc.content.substring(0, 300)}...</div>
-                    <div class="doc-metadata">
-                        ${Object.entries(doc.metadata).map(([k, v]) => 
-                            `<span class="meta-tag">${k}: ${v}</span>`
-                        ).join('')}
-                    </div>
+            <!-- Search tab -->
+            <div id="tab-search" class="hidden">
+                <div class="search-row">
+                    <input id="search-input" class="search-input" type="text"
+                           placeholder="Enter a semantic search query…" />
+                    <button class="btn" id="search-btn" onclick="doSearch()">Search</button>
                 </div>
-            `).join('');
-        }
+                <div id="search-results"></div>
+            </div>
 
-        function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            event.target.classList.add('active');
-            document.getElementById(tab + '-tab').classList.add('active');
+            <!-- Browse tab -->
+            <div id="tab-browse" class="hidden">
+                <div id="browse-results">
+                    <div class="empty"><div class="icon">📂</div><div>Loading documents…</div></div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
 
-            if (tab === 'browse' && !document.getElementById('all-docs').innerHTML) {
-                browseAll();
-            }
-        }
+<script>
+let activeStore = null;
+let activeTab   = 'stats';
+let browseLoaded = false;
 
-        // Enter key to search
-        document.getElementById('query')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') search();
-        });
+// ── Bootstrap ──────────────────────────────────────────────────────────────
 
-        // Load stats on page load
-        loadStats();
-    </script>
+async function init() {
+    const res  = await fetch('/api/stores');
+    const data = await res.json();
+    renderSidebar(data.stores || []);
+    if (data.stores && data.stores.length === 1) {
+        selectStore(data.stores[0].user_id, data.stores[0].session_id, data.stores[0]);
+    }
+}
+
+function renderSidebar(stores) {
+    const el = document.getElementById('store-list');
+    if (!stores.length) {
+        el.innerHTML = `<div class="no-stores">No vector stores found.<br><br>Make sure documents have been uploaded and the vector_store directory is in the same folder as this script.</div>`;
+        return;
+    }
+    el.innerHTML = stores.map(s => `
+        <div class="store-item" id="si-${s.user_id}-${s.session_id}"
+             onclick="selectStore('${s.user_id}','${s.session_id}',${JSON.stringify(s).replace(/"/g,'&quot;')})">
+            <div class="store-user">user_${s.user_id}</div>
+            <div class="store-session">session_${s.session_id}</div>
+            <div class="store-size">${(s.faiss_size/1024).toFixed(1)} KB index</div>
+        </div>
+    `).join('');
+}
+
+async function selectStore(userId, sessionId, meta) {
+    // Highlight sidebar
+    document.querySelectorAll('.store-item').forEach(e => e.classList.remove('active'));
+    const el = document.getElementById(`si-${userId}-${sessionId}`);
+    if (el) el.classList.add('active');
+
+    activeStore = { userId, sessionId };
+    browseLoaded = false;
+
+    document.getElementById('store-title').textContent = `user_${userId}  ›  session_${sessionId.substring(0,20)}…`;
+    document.getElementById('tabs').style.display = '';
+
+    switchTab('stats', document.querySelector('.tab-btn'));
+    loadStats(userId, sessionId);
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+
+function switchTab(name, btn) {
+    activeTab = name;
+    ['stats','search','browse'].forEach(t => {
+        document.getElementById('tab-'+t).classList.toggle('hidden', t !== name);
+    });
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    if (name === 'browse' && !browseLoaded) loadBrowse();
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+
+async function loadStats(userId, sessionId) {
+    const tab = document.getElementById('tab-stats');
+    tab.innerHTML = `<div class="empty"><div>Loading…</div></div>`;
+
+    const res  = await fetch(`/api/stats?user_id=${userId}&session_id=${sessionId}`);
+    const data = await res.json();
+    if (data.error) { tab.innerHTML = `<div class="empty">${data.error}</div>`; return; }
+
+    const sourceTags = (data.sources||[]).map(s =>
+        `<span class="source-tag">📄 ${s}</span>`
+    ).join('');
+
+    tab.innerHTML = `
+        <div class="stats-grid">
+            <div class="stat"><div class="stat-val">${data.total_vectors}</div><div class="stat-lbl">Vectors</div></div>
+            <div class="stat"><div class="stat-val">${data.total_documents}</div><div class="stat-lbl">Chunks</div></div>
+            <div class="stat"><div class="stat-val">${data.dimension}</div><div class="stat-lbl">Dimensions</div></div>
+            <div class="stat"><div class="stat-val">${data.sources.length}</div><div class="stat-lbl">Sources</div></div>
+        </div>
+        ${sourceTags ? `<div style="margin-bottom:8px;font-family:var(--mono);font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Documents</div><div class="sources-list">${sourceTags}</div>` : ''}
+        ${data.first_upload ? `<div style="font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:8px">First upload: ${data.first_upload} &nbsp;·&nbsp; Last: ${data.last_upload}</div>` : ''}
+    `;
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('search-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') doSearch();
+    });
+});
+
+async function doSearch() {
+    if (!activeStore) return;
+    const query = document.getElementById('search-input').value.trim();
+    if (!query) return;
+
+    const btn = document.getElementById('search-btn');
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    const res  = await fetch('/api/search', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ user_id: activeStore.userId, session_id: activeStore.sessionId, query, k: 6 })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = 'Search';
+
+    const el = document.getElementById('search-results');
+    if (data.error)          { el.innerHTML = `<div class="empty">${data.error}</div>`; return; }
+    if (!data.results.length){ el.innerHTML = `<div class="empty"><div class="icon">🔍</div><div>No results found</div></div>`; return; }
+
+    el.innerHTML = data.results.map((r, i) => `
+        <div class="doc-card">
+            <div class="doc-header">
+                <span class="doc-num">Result #${i+1}</span>
+                <span class="score-badge">score ${r.score.toFixed(4)}</span>
+            </div>
+            <div class="doc-content">${escHtml(r.content)}</div>
+            <div class="meta-row">${metaTags(r.metadata)}</div>
+        </div>
+    `).join('');
+}
+
+// ── Browse ─────────────────────────────────────────────────────────────────
+
+async function loadBrowse() {
+    if (!activeStore) return;
+    browseLoaded = true;
+    const el = document.getElementById('browse-results');
+    el.innerHTML = `<div class="empty"><div>Loading documents…</div></div>`;
+
+    const res  = await fetch(`/api/list?user_id=${activeStore.userId}&session_id=${activeStore.sessionId}`);
+    const data = await res.json();
+
+    if (data.error) { el.innerHTML = `<div class="empty">${data.error}</div>`; return; }
+    if (!data.documents.length){ el.innerHTML = `<div class="empty"><div class="icon">📂</div><div>No documents found</div></div>`; return; }
+
+    el.innerHTML = data.documents.map((d, i) => `
+        <div class="doc-card">
+            <div class="doc-header">
+                <span class="doc-num">Chunk #${i+1}</span>
+            </div>
+            <div class="doc-content">${escHtml(d.content.substring(0, 400))}${d.content.length > 400 ? '…' : ''}</div>
+            <div class="meta-row">${metaTags(d.metadata)}</div>
+        </div>
+    `).join('');
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function metaTags(meta) {
+    return Object.entries(meta||{}).map(([k,v]) =>
+        `<span class="meta-tag">${escHtml(k)}: ${escHtml(String(v).substring(0,60))}</span>`
+    ).join('');
+}
+
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+init();
+</script>
 </body>
 </html>
 """
 
+
+# ── API Routes ────────────────────────────────────────────────────────────────
+
 @app.route('/')
 def index():
-    """Main page"""
     return render_template_string(HTML_TEMPLATE)
 
+
+@app.route('/api/stores')
+def api_stores():
+    """List all discovered stores"""
+    stores = discover_vector_stores()
+    return jsonify({"stores": stores})
+
+
 @app.route('/api/stats')
-def get_stats():
-    """Get database statistics"""
-    database = load_db()
-    if not database:
-        return jsonify({"error": "Database not found"}), 404
-    
+def api_stats():
+    """Stats for a specific user/session store"""
+    user_id    = request.args.get('user_id')
+    session_id = request.args.get('session_id')
+
+    if not user_id or not session_id:
+        return jsonify({"error": "user_id and session_id are required"}), 400
+
+    db = load_store(user_id, session_id)
+    if not db:
+        return jsonify({"error": f"Store not found for user={user_id} session={session_id}"}), 404
+
     try:
-        index = database.index
-        docstore = database.docstore
-        all_docs = list(docstore._dict.values())
-        
-        sources = set()
+        index    = db.index
+        all_docs = list(db.docstore._dict.values())
+
+        sources      = set()
+        upload_times = []
+
         for doc in all_docs:
-            if hasattr(doc, 'metadata'):
-                sources.add(doc.metadata.get('source', 'Unknown'))
-        print("INDEX TOTAL:", index.ntotal)
-        print("DOCSTORE SIZE:", len(docstore._dict))
+            meta = getattr(doc, 'metadata', {})
+            sources.add(meta.get('source', 'Unknown'))
+            t = meta.get('upload_time')
+            if t:
+                upload_times.append(t)
+
         return jsonify({
-            "total_vectors": index.ntotal,
-            "dimension": index.d,
-            "total_documents": len(all_docs),
-            "sources": list(sources)
+            "total_vectors":    index.ntotal,
+            "dimension":        index.d,
+            "total_documents":  len(all_docs),
+            "sources":          sorted(sources),
+            "first_upload":     min(upload_times) if upload_times else None,
+            "last_upload":      max(upload_times) if upload_times else None,
         })
-        
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/search', methods=['POST'])
-def search():
-    """Search documents"""
-    database = load_db()
-    if not database:
-        return jsonify({"error": "Database not found"}), 404
-    
-    data = request.json
-    query = data.get('query', '')
-    k = data.get('k', 5)
-    
+def api_search():
+    """Semantic search within a store"""
+    body       = request.json or {}
+    user_id    = body.get('user_id')
+    session_id = body.get('session_id')
+    query      = body.get('query', '')
+    k          = int(body.get('k', 5))
+
+    if not user_id or not session_id:
+        return jsonify({"error": "user_id and session_id are required"}), 400
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+
+    db = load_store(user_id, session_id)
+    if not db:
+        return jsonify({"error": "Store not found"}), 404
+
     try:
-        results = database.similarity_search_with_score(query, k=k)
-        
-        formatted_results = []
-        for doc, score in results:
-            formatted_results.append({
-                "content": doc.page_content[:500],
-                "score": float(score),
-                "metadata": doc.metadata if hasattr(doc, 'metadata') else {}
-            })
-        
-        return jsonify({"results": formatted_results})
+        results = db.similarity_search_with_score(query, k=k)
+        return jsonify({"results": [
+            {
+                "content":  doc.page_content[:600],
+                "score":    float(score),
+                "metadata": getattr(doc, 'metadata', {})
+            }
+            for doc, score in results
+        ]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route('/api/list')
-def list_docs():
-    """List all documents"""
-    database = load_db()
-    if not database:
-        return jsonify({"error": "Database not found"}), 404
-    
+def api_list():
+    """Browse all document chunks in a store (first 60)"""
+    user_id    = request.args.get('user_id')
+    session_id = request.args.get('session_id')
+
+    if not user_id or not session_id:
+        return jsonify({"error": "user_id and session_id are required"}), 400
+
+    db = load_store(user_id, session_id)
+    if not db:
+        return jsonify({"error": "Store not found"}), 404
+
     try:
-        docstore = database.docstore
-        all_docs = list(docstore._dict.values())[:50]  # Limit to 50
-        
-        formatted_docs = []
-        for doc in all_docs:
-            formatted_docs.append({
-                "content": doc.page_content,
-                "metadata": doc.metadata if hasattr(doc, 'metadata') else {}
-            })
-        
-        return jsonify({"documents": formatted_docs})
+        all_docs = list(db.docstore._dict.values())[:60]
+        return jsonify({"documents": [
+            {"content": doc.page_content, "metadata": getattr(doc, 'metadata', {})}
+            for doc in all_docs
+        ]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🌐 Starting FAISS Web Viewer")
+    print("🌐  FAISS Web Viewer  (Per-Session)")
     print("="*60)
-    print(f"\n📂 Vector store: {VECTOR_PATH}")
-    print(f"🌐 Open: http://localhost:5001")
-    print("\nPress Ctrl+C to stop\n")
-    
+    print(f"\n📂  Vector base: {VECTOR_BASE_PATH}")
+
+    stores = discover_vector_stores()
+    if stores:
+        print(f"✅  Found {len(stores)} store(s)")
+        for s in stores:
+            print(f"    • user_{s['user_id']} / session_{s['session_id'][:30]}")
+    else:
+        print("⚠️   No stores found — check VECTOR_BASE_PATH")
+
+    print(f"\n🌐  Open: http://localhost:5001\n")
     app.run(host='0.0.0.0', port=5001, debug=True)

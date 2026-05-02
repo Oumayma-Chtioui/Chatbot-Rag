@@ -133,11 +133,43 @@ def delete_bot_document(
     db: Session = Depends(get_db)
 ):
     from database import documents_collection
+    import os
+
+    # 1. Verify bot ownership in PostgreSQL
     bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
+
+    # 2. Get document metadata from MongoDB to find the file path
+    doc = documents_collection.find_one({"id": doc_id, "user_id": bot_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # 3. Delete physical source file from UPLOAD_DIR
+    file_path = doc.get("path")
+    if file_path and doc.get("type") != "url":
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"🗑️ Deleted source file: {file_path}")
+            except Exception as e:
+                logger.error(f"❌ Failed to delete file: {e}")
+
+    # 4. Delete vectors from FAISS index surgically
+    from services.rag_services import delete_document_from_index
+    session_id = doc.get("session_id", f"bot_{bot_id}")
+    clean_session_id = session_id.replace("session_", "").replace("session-", "")
+    try:
+        delete_document_from_index(bot_id, clean_session_id, doc_id)
+        logger.info(f"✅ Removed vectors for doc: {doc_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to remove vectors: {e}")
+
+    # 5. Delete metadata from MongoDB
     documents_collection.delete_one({"id": doc_id, "user_id": bot_id})
+    
     return {"ok": True, "deleted": doc_id}
+    
 
 @router.post("/bots/{bot_id}/keys")
 def create_api_key(
@@ -225,80 +257,6 @@ def revoke_key(
     key.is_active = False
     db.commit()
     return {"ok": True, "revoked": key_id}
-@router.delete("/bots/{bot_id}/memory")
-def clear_bot_memory(
-    bot_id: str,
-    current_user: UserModel = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Deletes ALL data related to a bot:
-    - FAISS memory (per session)
-    - MongoDB chat messages
-    - Widget messages
-    - Intervention tickets (optional)
-    """
-
-    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-
-    deleted = {
-        "faiss_folders": [],
-        "messages": 0,
-        "widget_messages": 0,
-        "tickets": 0
-    }
-    errors = []
-
-    # ─────────────────────────────────────────
-    # 1. DELETE FAISS MEMORY (your existing logic)
-    # ─────────────────────────────────────────
-    vector_root = os.path.join(os.getcwd(), "vector_store", f"user_{bot_id}")
-
-    if os.path.isdir(vector_root):
-        for entry in os.scandir(vector_root):
-            if entry.is_dir() and entry.name.endswith("_memory"):
-                try:
-                    shutil.rmtree(entry.path)
-                    deleted["faiss_folders"].append(entry.name)
-                except Exception as e:
-                    errors.append({"folder": entry.name, "error": str(e)})
-
-    # ─────────────────────────────────────────
-    # 2. DELETE CHAT MESSAGES (messages_collection)
-    # ─────────────────────────────────────────
-    try:
-        result = messages_collection.delete_many({"user_id": bot_id})
-        deleted["messages"] = result.deleted_count
-    except Exception as e:
-        errors.append({"messages_collection": str(e)})
-
-    # ─────────────────────────────────────────
-    # 3. DELETE WIDGET MESSAGES
-    # ─────────────────────────────────────────
-    try:
-        result = mongodb["widget_messages"].delete_many({"bot_id": bot_id})
-        deleted["widget_messages"] = result.deleted_count
-    except Exception as e:
-        errors.append({"widget_messages": str(e)})
-
-    # ─────────────────────────────────────────
-    # 4. DELETE INTERVENTION TICKETS (optional but recommended)
-    # ─────────────────────────────────────────
-    try:
-        result = mongodb["intervention_tickets"].delete_many({"bot_id": bot_id})
-        deleted["tickets"] = result.deleted_count
-    except Exception as e:
-        errors.append({"intervention_tickets": str(e)})
-
-    return {
-        "ok": len(errors) == 0,
-        "deleted": deleted,
-        "errors": errors,
-        "message": "All bot data cleared successfully"
-    }
- 
 from datetime import datetime, timedelta
 
 @router.get("/bots/{bot_id}/analytics")
@@ -727,40 +685,6 @@ async def get_advanced_analytics(
             "storage_limit_mb": 5120,   # 5 GB
             "api_keys_used":    api_key_count,
             "api_keys_limit":   5,
-        }# ── NEW: Real quota numbers ────────────────────────────────────────────
-        from database import documents_collection as docs_col
-        real_doc_count = docs_col.count_documents({"user_id": bot_id})
-
-        # Rough storage: sum file sizes stored in MongoDB doc records (KB field).
-        docs_cursor = list(docs_col.find({"user_id": bot_id}, {"size": 1, "_id": 0}))
-        total_kb = 0.0
-        for d in docs_cursor:
-            raw = d.get("size", "0")
-            # size is stored as "12.3 KB" or "1.2 MB"
-            try:
-                num, unit = str(raw).split()
-                num = float(num)
-                if "MB" in unit.upper():
-                    total_kb += num * 1024
-                else:
-                    total_kb += num
-            except Exception:
-                pass
-        storage_mb = round(total_kb / 1024, 2)
-
-        # API keys count
-        from models.widget import WidgetApiKey
-        api_key_count = db.query(WidgetApiKey).filter_by(bot_id=bot_id, is_active=True).count()
-
-        quota = {
-            "messages_used":  total,
-            "messages_limit": 5000,
-            "docs_used":      real_doc_count,
-            "docs_limit":     50,
-            "storage_mb":     storage_mb,
-            "storage_limit_mb": 5120,   # 5 GB
-            "api_keys_used":  api_key_count,
-            "api_keys_limit": 5,
         }
 
         return {
