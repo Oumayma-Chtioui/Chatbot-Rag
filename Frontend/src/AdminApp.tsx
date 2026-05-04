@@ -110,14 +110,32 @@ export default function AdminApp() {
 
   const handleDeleteUser = async (userId: number) => {
     try {
-      await fetchWithAuth(`/admin/users/${userId}`);
+      const token = adminToken();
+      const API = "http://localhost:8000";
+      const res = await fetch(`${API}/admin/users/${userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Delete failed");
+      }
       setUsers(users.filter((u) => u.id !== userId));
     } catch (err: any) { setError(err.message); }
   };
 
   const handleDeleteBot = async (botId: string) => {
     try {
-      await api.deleteBot(botId);
+      const token = adminToken();
+      const API = "http://localhost:8000";
+      const res = await fetch(`${API}/admin/bots/${botId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Delete failed");
+      }
       setBots(bots.filter((b) => b.id !== botId));
     } catch (err: any) { setError(err.message); }
   };

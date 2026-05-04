@@ -1,3 +1,6 @@
+// Frontend/src/ClientFeedback.tsx
+// Updated: accent color from bot, bot name shown in header
+
 import { useEffect, useState } from "react";
 import { Bot } from "./ClientApp";
 import FeedbackWidget from "./FeedbackWidget";
@@ -28,12 +31,12 @@ interface Props {
 }
 
 const TEST_DURATIONS = [
-  { label: "30 min",  minutes: 30 },
-  { label: "1 hour",  minutes: 60 },
-  { label: "6 hours", minutes: 360 },
-  { label: "24 hours",minutes: 1440 },
-  { label: "7 days",  minutes: 10080 },
-  { label: "Always active", minutes: 0 },
+  { label: "30 min",       minutes: 30 },
+  { label: "1 hour",       minutes: 60 },
+  { label: "6 hours",      minutes: 360 },
+  { label: "24 hours",     minutes: 1440 },
+  { label: "7 days",       minutes: 10080 },
+  { label: "Always active",minutes: 0 },
 ];
 
 function minutesUntilExpiry(expiresAt: string): string {
@@ -48,18 +51,18 @@ function minutesUntilExpiry(expiresAt: string): string {
 }
 
 export default function ClientFeedback({ bot }: Props) {
-  const [feedback,       setFeedback]       = useState<FeedbackItem[]>([]);
-  const [avgScore,       setAvgScore]       = useState(0);
-  const [total,          setTotal]          = useState(0);
-  const [loading,        setLoading]        = useState(true);
-  const [error,          setError]          = useState<string | null>(null);
+  const [feedback,     setFeedback]     = useState<FeedbackItem[]>([]);
+  const [avgScore,     setAvgScore]     = useState(0);
+  const [total,        setTotal]        = useState(0);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState<string | null>(null);
+  const [allowTesting, setAllowTesting] = useState(false);
+  const [testDuration, setTestDuration] = useState(TEST_DURATIONS[0]);
+  const [testSessions, setTestSessions] = useState<TestSession[]>([]);
+  const [activating,   setActivating]   = useState(false);
+  const [testMsg,      setTestMsg]      = useState<string | null>(null);
 
-  // Testing access state
-  const [allowTesting,   setAllowTesting]   = useState(false);
-  const [testDuration,   setTestDuration]   = useState(TEST_DURATIONS[0]);
-  const [testSessions,   setTestSessions]   = useState<TestSession[]>([]);
-  const [activating,     setActivating]     = useState(false);
-  const [testMsg,        setTestMsg]        = useState<string | null>(null);
+  const accent = bot?.accent_color || "var(--accent)";
 
   const loadFeedback = async () => {
     if (!bot) return;
@@ -94,9 +97,7 @@ export default function ClientFeedback({ bot }: Props) {
         const data = await res.json();
         setTestSessions(data.sessions || []);
       }
-    } catch {
-      // silently fail — endpoint may not exist yet
-    }
+    } catch { /* silently fail */ }
   };
 
   useEffect(() => {
@@ -109,11 +110,10 @@ export default function ClientFeedback({ bot }: Props) {
     setActivating(true);
     setTestMsg(null);
     try {
-      const body: any = { duration_minutes: testDuration.minutes };
       const res = await fetch(`${API}/widgets/bots/${bot.id}/test-sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ duration_minutes: testDuration.minutes }),
       });
       if (!res.ok) {
         const e = await res.json();
@@ -122,8 +122,8 @@ export default function ClientFeedback({ bot }: Props) {
       const data = await res.json();
       setTestMsg(
         testDuration.minutes === 0
-          ? "Permanent test access granted. The admin can now access this bot widget."
-          : `Test access activated for ${testDuration.label}. Access expires at ${new Date(data.expires_at).toLocaleTimeString()}.`
+          ? "Permanent test access granted."
+          : `Test access activated for ${testDuration.label}. Expires at ${new Date(data.expires_at).toLocaleTimeString()}.`
       );
       setAllowTesting(false);
       await loadTestSessions();
@@ -142,9 +142,7 @@ export default function ClientFeedback({ bot }: Props) {
         headers: { Authorization: `Bearer ${token()}` },
       });
       await loadTestSessions();
-    } catch {
-      // silently fail
-    }
+    } catch { /* silently fail */ }
   };
 
   if (!bot) return null;
@@ -154,7 +152,7 @@ export default function ClientFeedback({ bot }: Props) {
       <div className="cl-page-header">
         <h1 className="cl-page-title">Feedback</h1>
         <p className="cl-page-sub">
-          Rate your bot's performance and manage temporary admin test access.
+          Ratings for <strong>{bot.name}</strong> · manage temporary admin test access.
         </p>
       </div>
 
@@ -166,116 +164,64 @@ export default function ClientFeedback({ bot }: Props) {
         <>
           <div className="cl-stats-grid">
             <div className="cl-stat-card">
+              <div className="cl-stat-icon" style={{ color: accent }}>★</div>
               <div className="cl-stat-value">{avgScore.toFixed(1)}</div>
               <div className="cl-stat-label">Avg score</div>
             </div>
             <div className="cl-stat-card">
+              <div className="cl-stat-icon" style={{ color: accent }}>✉</div>
               <div className="cl-stat-value">{total}</div>
               <div className="cl-stat-label">Submissions</div>
             </div>
           </div>
 
-          {/* ── Feedback form + Allow testing ── */}
           <div className="cl-section">
             <div className="cl-feedback-card">
               <div className="cl-section-title">Share feedback</div>
-              <p className="cl-hint">
-                Rate the bot so we can improve accuracy, speed, and relevance.
-              </p>
-
+              <p className="cl-hint">Rate the bot so we can improve accuracy, speed, and relevance.</p>
               <FeedbackWidget bot={bot} onSuccess={loadFeedback} />
 
               {/* Allow testing toggle */}
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 16,
-                  borderTop: "1px solid var(--border)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                }}
-              >
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <label
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      cursor: "pointer",
-                      padding: "7px 14px",
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid var(--border)",
-                      background: allowTesting ? "rgba(127,119,221,0.08)" : "var(--bg2)",
-                      fontSize: 13,
-                      color: "var(--text2)",
-                      userSelect: "none",
-                    }}
-                  >
+                  <label style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    cursor: "pointer", padding: "7px 14px",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border)",
+                    background: allowTesting ? `${accent}11` : "var(--bg2)",
+                    fontSize: 13, color: "var(--text2)", userSelect: "none",
+                  } as React.CSSProperties}>
                     <input
                       type="checkbox"
                       checked={allowTesting}
-                      onChange={(e) => {
-                        setAllowTesting(e.target.checked);
-                        setTestMsg(null);
-                      }}
-                      style={{ accentColor: "var(--accent)" }}
+                      onChange={(e) => { setAllowTesting(e.target.checked); setTestMsg(null); }}
+                      style={{ accentColor: accent }}
                     />
                     Allow admin testing
-                    <span
-                      title="Grants temporary access for an admin to test this bot widget — useful for debugging without exposing it publicly."
-                      style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: "50%",
-                        background: "var(--bg3)",
-                        color: "var(--text3)",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 10,
-                        fontWeight: 700,
-                        cursor: "help",
-                        flexShrink: 0,
-                      }}
-                    >?</span>
                   </label>
                 </div>
 
                 {allowTesting && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      flexWrap: "wrap",
-                      padding: "12px 14px",
-                      background: "var(--bg2)",
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <span style={{ fontSize: 13, color: "var(--text2)", whiteSpace: "nowrap" }}>
-                      Duration:
-                    </span>
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                    padding: "12px 14px", background: "var(--bg2)",
+                    borderRadius: "var(--radius-sm)", border: "1px solid var(--border)",
+                  }}>
+                    <span style={{ fontSize: 13, color: "var(--text2)", whiteSpace: "nowrap" }}>Duration:</span>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {TEST_DURATIONS.map((d) => (
                         <label
                           key={d.label}
                           style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            fontSize: 12,
-                            padding: "5px 10px",
-                            borderRadius: 20,
+                            display: "flex", alignItems: "center", gap: 5,
+                            fontSize: 12, padding: "5px 10px", borderRadius: 20,
                             border: "1px solid",
-                            borderColor: testDuration.label === d.label ? "var(--accent)" : "var(--border)",
-                            background: testDuration.label === d.label ? "rgba(127,119,221,0.12)" : "var(--bg3)",
-                            color: testDuration.label === d.label ? "var(--accent-light)" : "var(--text2)",
-                            cursor: "pointer",
-                            userSelect: "none",
-                          }}
+                            borderColor: testDuration.label === d.label ? accent : "var(--border)",
+                            background: testDuration.label === d.label ? `${accent}18` : "var(--bg3)",
+                            color: testDuration.label === d.label ? accent : "var(--text2)",
+                            cursor: "pointer", userSelect: "none",
+                          } as React.CSSProperties}
                         >
                           <input
                             type="radio"
@@ -292,7 +238,7 @@ export default function ClientFeedback({ bot }: Props) {
                       className="cl-btn-primary"
                       onClick={handleActivateTest}
                       disabled={activating}
-                      style={{ marginLeft: "auto" }}
+                      style={{ marginLeft: "auto", background: accent }}
                     >
                       {activating ? "Activating…" : "Activate"}
                     </button>
@@ -300,18 +246,12 @@ export default function ClientFeedback({ bot }: Props) {
                 )}
 
                 {testMsg && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      padding: "8px 12px",
-                      borderRadius: "var(--radius-sm)",
-                      background: testMsg.startsWith("Error")
-                        ? "rgba(216,90,48,0.08)"
-                        : "rgba(29,158,117,0.08)",
-                      border: `1px solid ${testMsg.startsWith("Error") ? "rgba(216,90,48,0.2)" : "rgba(29,158,117,0.2)"}`,
-                      color: testMsg.startsWith("Error") ? "var(--danger)" : "var(--success)",
-                    }}
-                  >
+                  <div style={{
+                    fontSize: 12, padding: "8px 12px", borderRadius: "var(--radius-sm)",
+                    background: testMsg.startsWith("Error") ? "rgba(216,90,48,0.08)" : "rgba(29,158,117,0.08)",
+                    border: `1px solid ${testMsg.startsWith("Error") ? "rgba(216,90,48,0.2)" : "rgba(29,158,117,0.2)"}`,
+                    color: testMsg.startsWith("Error") ? "var(--danger)" : "var(--success)",
+                  }}>
                     {testMsg}
                   </div>
                 )}
@@ -319,13 +259,13 @@ export default function ClientFeedback({ bot }: Props) {
             </div>
           </div>
 
-          {/* ── Active test sessions ── */}
+          {/* Active test sessions */}
           {testSessions.length > 0 && (
             <div className="cl-section">
               <h2 className="cl-section-title">Active test sessions</h2>
               <div className="cl-doc-list">
-                {testSessions.map((s) => (
-                  <div key={s.id} className="cl-doc-row">
+                {testSessions.map((s: any) => (
+                  <div key={s.session_id} className="cl-doc-row">
                     <div className="cl-doc-info" style={{ flex: 1 }}>
                       <div className="cl-doc-name">{s.email || "Admin"}</div>
                       <div className="cl-doc-meta">
@@ -336,20 +276,14 @@ export default function ClientFeedback({ bot }: Props) {
                     <div className={`cl-badge ${s.is_active ? "success" : "warn"}`}>
                       {s.is_active ? "Active" : "Expired"}
                     </div>
-                    <button
-                      className="cl-btn-danger"
-                      onClick={() => handleRevokeTest(s.session_id)}
-                      title="Revoke test access"
-                    >
-                      ✕
-                    </button>
+                    <button className="cl-btn-danger" onClick={() => handleRevokeTest(s.session_id)}>✕</button>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ── Recent feedback ── */}
+          {/* Recent feedback */}
           <div className="cl-section">
             <h2 className="cl-section-title">Recent feedback</h2>
             {feedback.length === 0 ? (
@@ -359,7 +293,9 @@ export default function ClientFeedback({ bot }: Props) {
                 {feedback.map((item) => (
                   <div key={item.id} className="feedback-card">
                     <div className="feedback-card-header">
-                      <span className="rating-pill">{item.rating} ★</span>
+                      <span className="rating-pill" style={{ background: `${accent}18`, color: accent }}>
+                        {item.rating} ★
+                      </span>
                       <span className="feedback-category">{item.category}</span>
                     </div>
                     <p className="feedback-comment">{item.comment || "No comment provided."}</p>

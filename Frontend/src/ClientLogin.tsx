@@ -1,21 +1,25 @@
+// Frontend/src/ClientLogin.tsx
+// Updated: login no longer auto-creates or fetches a bot.
+// ClientApp handles multi-bot loading after authentication.
+
 import { useState, ChangeEvent, FormEvent } from "react";
-import { ClientUser, Bot } from "./ClientApp";
+import { ClientUser } from "./ClientApp";
 
 const API = "http://localhost:8000";
 
 interface Props {
-  onLogin: (user: ClientUser, token: string, bot: Bot) => void;
+  onLogin: (user: ClientUser, token: string) => void;
 }
 
 export default function ClientLogin({ onLogin }: Props) {
-  const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("");
+  const [mode, setMode]         = useState<"login" | "register">("login");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [botName, setBotName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [successMsg, setSuccessMsg] = useState("")
+  const [name, setName]         = useState("");
+  const [error, setError]       = useState<string | null>(null);
+  const [loading, setLoading]   = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -32,15 +36,12 @@ export default function ClientLogin({ onLogin }: Props) {
           const e = await regRes.json();
           throw new Error(e.detail || "Registration failed");
         }
-        // STOP HERE — show message, don't proceed to login
-        setError(""); 
         setMode("login");
-        // add a success state to show the message
         setSuccessMsg("Check your email to verify your account before signing in.");
-        return;  // ← this is the key line, was missing
+        return;
       }
 
-      // 2. Login to get token
+      // Login
       const loginRes = await fetch(`${API}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -52,29 +53,9 @@ export default function ClientLogin({ onLogin }: Props) {
       }
       const { access_token, user } = await loginRes.json();
 
-      // 3. Create or fetch bot
-      const botsRes = await fetch(`${API}/widgets/bots`, {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
-      const bots = await botsRes.json();
+      // Pass token + user up — ClientApp will load all bots itself
+      onLogin(user, access_token);
 
-      let bot: Bot;
-      if (bots.length > 0) {
-        bot = bots[0];
-      } else {
-        const createRes = await fetch(`${API}/widgets/bots`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${access_token}`,
-          },
-          body: JSON.stringify({ name: botName || `${name}'s bot` }),
-        });
-        const created = await createRes.json();
-        bot = { id: created.bot_id, name: created.name, allowed_origin: null };
-      }
-
-      onLogin(user, access_token, bot);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -86,39 +67,35 @@ export default function ClientLogin({ onLogin }: Props) {
     <div className="cl-login-page">
       <div className="cl-login-card">
         <div className="cl-login-brand">
-          <span className="cl-brand-icon">✦</span>
-          <span className="cl-brand-name">NovaMind</span>
+          <span className="cl-brand-icon" style={{ fontSize: 20 }}>✦</span>
+          <span className="cl-brand-name" style={{ fontSize: 16, fontWeight: 600 }}>NovaMind</span>
         </div>
-        <p className="cl-login-sub">Client Portal</p>
+        <p className="cl-login-sub">Client Portal — manage your chatbots</p>
 
         <div className="cl-login-tabs">
           <button
             className={mode === "login" ? "active" : ""}
-            onClick={() => setMode("login")}
-          >Sign in</button>
+            onClick={() => { setMode("login"); setSuccessMsg(""); setError(null); }}
+          >
+            Sign in
+          </button>
           <button
             className={mode === "register" ? "active" : ""}
-            onClick={() => setMode("register")}
-          >Register</button>
+            onClick={() => { setMode("register"); setSuccessMsg(""); setError(null); }}
+          >
+            Register
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="cl-login-form">
           {mode === "register" && (
-            <>
-              <input
-                className="cl-input"
-                placeholder="Your name"
-                value={name}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
-                required
-              />
-              <input
-                className="cl-input"
-                placeholder="Bot name (e.g. Support Assistant)"
-                value={botName}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setBotName(e.target.value)}
-              />
-            </>
+            <input
+              className="cl-input"
+              placeholder="Your name"
+              value={name}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+              required
+            />
           )}
           <input
             className="cl-input"
@@ -136,9 +113,23 @@ export default function ClientLogin({ onLogin }: Props) {
             onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
             required
           />
+
+          {successMsg && (
+            <div style={{
+              fontSize: 12, padding: "8px 12px", borderRadius: 6,
+              background: "rgba(29,158,117,0.08)",
+              border: "1px solid rgba(29,158,117,0.2)",
+              color: "var(--success)",
+            }}>
+              {successMsg}
+            </div>
+          )}
           {error && <div className="cl-error">{error}</div>}
+
           <button className="cl-btn-primary" type="submit" disabled={loading}>
-            {loading ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
+            {loading
+              ? "Please wait…"
+              : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
       </div>

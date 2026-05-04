@@ -24,6 +24,8 @@ class WidgetBot(Base):
     name           = Column(String,  nullable=False)
     system_prompt  = Column(String,  default="You are a helpful assistant.")
     allowed_origin = Column(String,  nullable=True)
+    accent_color   = Column(String,  default="#7F77DD", nullable=True)
+    welcome_message = Column(String, default="Hi! How can I help you today?", nullable=True)
     is_active      = Column(Boolean, default=True)
     docs_indexed   = Column(Integer, default=0)
     created_at     = Column(DateTime, default=datetime.utcnow)

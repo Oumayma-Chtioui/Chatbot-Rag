@@ -220,3 +220,8 @@
     font-size: 13px;
 }
 .nm-err { color: #dc2626; font-size: 12px; margin-top: 6px; }
+
+.nm-table-wrap { overflow-x: auto; width: 100%; }
+.nm-msg.nm-bot table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.nm-msg.nm-bot th, .nm-msg.nm-bot td { border: 1px solid #e5e5e3; padding: 5px 8px; text-align: left; white-space: nowrap; }
+.nm-msg.nm-bot th { background: #f4f4f2; font-weight: 600; }

@@ -40,6 +40,8 @@ _STOP = {
 }
  
 _NO_ANSWER = [
+    "i don't have enough information to answer this",
+    "i don't have enough information", 
     "i don't have information","i couldn't find","not found in the documents",
     "no relevant information","i don't know","cannot answer","not mentioned",
     "no information about","i'm unable to find","there is no information",
@@ -76,13 +78,17 @@ def _safe_date_str(val) -> str:
 class CreateBotRequest(BaseModel):
     name: str
     system_prompt: Optional[str] = "You are a helpful assistant."
-    allowed_origin: Optional[str] = None   # e.g. "https://myshop.com"
+    allowed_origin: Optional[str] = None
+    welcome_message: Optional[str] = "Hi! How can I help you today?"
+    accent_color: Optional[str] = "#7F77DD"
 
 
 class UpdateBotRequest(BaseModel):
     name: Optional[str] = None
     system_prompt: Optional[str] = None
     allowed_origin: Optional[str] = None
+    welcome_message: Optional[str] = None
+    accent_color: Optional[str] = None
 
 
 @router.post("/bots")
@@ -97,10 +103,24 @@ def create_bot(
         name=req.name,
         system_prompt=req.system_prompt,
         allowed_origin=req.allowed_origin,
+        welcome_message=req.welcome_message,
+        accent_color=req.accent_color,
     )
     db.add(bot)
     db.commit()
-    return {"bot_id": bot.id, "name": bot.name}
+    # Return full object so the frontend doesn't have to reconstruct it from local state
+    return {
+        "bot_id":          bot.id,
+        "id":              bot.id,
+        "name":            bot.name,
+        "system_prompt":   bot.system_prompt,
+        "allowed_origin":  bot.allowed_origin,
+        "welcome_message": bot.welcome_message,
+        "accent_color":    bot.accent_color,
+        "docs_indexed":    0,
+        "is_active":       True,
+        "created_at":      bot.created_at.isoformat() if bot.created_at else None,
+    }
 
 
 @router.get("/bots")
@@ -109,7 +129,20 @@ def list_bots(
     db: Session = Depends(get_db)
 ):
     bots = db.query(WidgetBot).filter_by(owner_id=current_user.id, is_active=True).all()
-    return [{"id": b.id, "name": b.name, "allowed_origin": b.allowed_origin} for b in bots]
+    return [
+        {
+            "id":              b.id,
+            "name":            b.name,
+            "system_prompt":   b.system_prompt,
+            "allowed_origin":  b.allowed_origin,
+            "welcome_message": b.welcome_message or "Hi! How can I help you today?",
+            "accent_color":    b.accent_color or "#7F77DD",
+            "docs_indexed":    b.docs_indexed or 0,
+            "is_active":       b.is_active,
+            "created_at":      b.created_at.isoformat() if b.created_at else None,
+        }
+        for b in bots
+    ]
 
 
 @router.delete("/bots/{bot_id}")
@@ -387,12 +420,24 @@ def update_bot(
         bot.name = req.name
     if req.system_prompt is not None:
         bot.system_prompt = req.system_prompt
-    if req.allowed_origin is not None:
-        bot.allowed_origin = req.allowed_origin
-    else:
-        bot.allowed_origin = None
+    if req.welcome_message is not None:
+        bot.welcome_message = req.welcome_message
+    if req.accent_color is not None:
+        bot.accent_color = req.accent_color
+    # allowed_origin: explicit None means "clear it", so always update
+    bot.allowed_origin = req.allowed_origin if req.allowed_origin else None
     db.commit()
-    return {"id": bot.id, "name": bot.name, "allowed_origin": bot.allowed_origin}
+    return {
+        "id":              bot.id,
+        "name":            bot.name,
+        "system_prompt":   bot.system_prompt,
+        "allowed_origin":  bot.allowed_origin,
+        "welcome_message": bot.welcome_message,
+        "accent_color":    bot.accent_color,
+        "docs_indexed":    bot.docs_indexed or 0,
+        "is_active":       bot.is_active,
+        "created_at":      bot.created_at.isoformat() if bot.created_at else None,
+    }
 
 from fastapi import UploadFile, File
 from services.rag_services import load_document, load_url

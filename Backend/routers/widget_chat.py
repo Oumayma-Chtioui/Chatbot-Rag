@@ -42,6 +42,8 @@ STOP_WORDS = {
 
 NO_ANSWER_PHRASES = [
     # English
+    "i don't have enough information to answer this", 
+    "i don't have enough information",
     "i don't have information", "i couldn't find", "not found in the documents",
     "no relevant information", "i don't know", "cannot answer", "not mentioned",
     "no information about", "i'm unable to find", "there is no information",
@@ -177,7 +179,6 @@ async def widget_chat_stream(
 
             # Send sources + session_id as final tagged chunk for the widget to parse
             yield f"\n__SOURCES__:{json.dumps(sources)}"
-            yield f"\n__SESSION__:{chat_session_id}"
 
         except Exception as e:
             logging.error(f"[widget stream] {e}")

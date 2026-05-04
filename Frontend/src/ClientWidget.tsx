@@ -1,3 +1,6 @@
+// Frontend/src/ClientWidget.tsx
+// Updated: shows accent color in embed snippet, bot accent reflected in UI hints
+
 import { useState, useEffect } from "react";
 import { Bot } from "./ClientApp";
 
@@ -19,13 +22,14 @@ interface Props {
 }
 
 export default function ClientWidget({ bot, setBot, user }: Props) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [newKey, setNewKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [origin, setOrigin] = useState(bot?.allowed_origin || "");
-  useEffect(() => { setOrigin(bot?.allowed_origin || ""); }, [bot?.allowed_origin]);
-  const [apiBase, setApiBase] = useState("http://localhost:8000");
+  const [keys, setKeys]         = useState<ApiKey[]>([]);
+  const [newKey, setNewKey]     = useState<string | null>(null);
+  const [copied, setCopied]     = useState(false);
+  const [origin, setOrigin]     = useState(bot?.allowed_origin || "");
+  const [apiBase, setApiBase]   = useState("http://localhost:8000");
   const [generating, setGenerating] = useState(false);
+
+  useEffect(() => { setOrigin(bot?.allowed_origin || ""); }, [bot?.allowed_origin]);
 
   const loadKeys = async () => {
     if (!bot) return;
@@ -37,7 +41,6 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
   };
 
   useEffect(() => { loadKeys(); }, [bot]);
-  
 
   const handleGenerate = async () => {
     if (!bot) return;
@@ -71,12 +74,8 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
     const updated = await res.json();
     const updatedBot = { ...bot, allowed_origin: updated.allowed_origin };
     setBot(updatedBot);
-    localStorage.setItem("client_bot", JSON.stringify(updatedBot)); // ADD THIS
+    localStorage.setItem("client_bot", JSON.stringify(updatedBot));
   };
-
-  const embedCode = newKey
-    ? `<script>\n  window.NovaMindConfig = {\n    apiKey:  "${newKey}",\n    apiBase: "${apiBase}",\n    botName: "${bot?.name || "Assistant"}",\n  };\n</script>\n<script src="${apiBase}/static/widget.js"></script>`
-    : null;
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -84,12 +83,40 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const accent = bot?.accent_color || "#7F77DD";
+
+  // Build embed snippet including accent color and welcome message
+  const displayKey = newKey ?? (keys.find(k => k.is_active)?.prefix
+    ? keys.find(k => k.is_active)!.prefix + "••••••••"
+    : null);
+
+  const embedCode = displayKey
+    ? `<script>
+    window.NovaMindConfig = {
+      apiKey:         "${newKey ?? "<your-api-key>"}",
+      apiBase:        "${apiBase}",
+      botName:        "${bot?.name || "Assistant"}",
+      accent:         "${accent}",
+      welcomeMessage: "${bot?.welcome_message || "Hi! How can I help you today?"}",
+    };
+  </script>
+  <script src="${apiBase}/static/widget.js"></script>`
+    : null;
+
   return (
     <div className="cl-page">
       <div className="cl-page-header">
         <h1 className="cl-page-title">Widget setup</h1>
         <p className="cl-page-sub">Generate an API key and embed your chatbot on any website.</p>
       </div>
+
+      {/* Accent color preview strip */}
+      <div style={{
+        height: 4, borderRadius: 4,
+        background: accent,
+        marginBottom: 24,
+        opacity: 0.7,
+      }} />
 
       <div className="cl-section">
         <h2 className="cl-section-title">Allowed origin</h2>
@@ -108,12 +135,12 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
       <div className="cl-section">
         <h2 className="cl-section-title">API keys</h2>
         <button className="cl-btn-primary" onClick={handleGenerate} disabled={generating}>
-          {generating ? "Generating..." : "Generate new key"}
+          {generating ? "Generating…" : "Generate new key"}
         </button>
 
         {newKey && (
           <div className="cl-key-reveal">
-            <p className="cl-hint cl-warn-text">Copy this key now — it will not be shown again.</p>
+            <p className="cl-hint cl-warn-text">⚠ Copy this key now — it will not be shown again.</p>
             <div className="cl-key-row">
               <code className="cl-key-code">{newKey}</code>
               <button className="cl-btn-outline" onClick={() => copy(newKey)}>
@@ -124,6 +151,9 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
         )}
 
         <div className="cl-doc-list" style={{ marginTop: 16 }}>
+          {keys.length === 0 && (
+            <div className="cl-empty">No keys yet. Generate one above.</div>
+          )}
           {keys.map((k) => (
             <div className="cl-doc-row" key={k.id}>
               <code className="cl-mono">{k.prefix}••••••••</code>
@@ -147,7 +177,7 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
       {embedCode && (
         <div className="cl-section">
           <h2 className="cl-section-title">Embed code</h2>
-          <p className="cl-hint">Paste this before &lt;/body&gt; on your website.</p>
+          <p className="cl-hint">Paste this before &lt;/body&gt; on your website. Your accent color and welcome message are pre-configured.</p>
           <div className="cl-url-row" style={{ marginBottom: 8 }}>
             <input
               className="cl-input"

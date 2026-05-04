@@ -215,6 +215,17 @@ def retrieve_relevant_history(user_id: str, session_id: str, question: str, k: i
         logger.error(traceback.format_exc())
         return ""
 
+async def fetch_full_history(memory_session_id: str) -> str:
+    from database import messages_collection
+    recent_msgs = list(messages_collection.find(
+        {"session_id": memory_session_id},
+        sort=[("timestamp", 1)],
+        limit=10
+    ))
+    return "\n".join(
+        f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+        for m in recent_msgs
+    )
 
 # ─────────────────────────────────────────────────────────────
 # MongoDB message saving
@@ -528,11 +539,27 @@ def get_reranker():
     return _reranker
 
 def rerank(query, docs, top_n=3):
+    # Stage 1: Semantic reranking (beats keyword filtering)
+    embeddings = get_embeddings()
+    query_embedding = embeddings.embed_query(query)
+    
+    import numpy as np
+    def cosine_sim(a, b):
+        a, b = np.array(a), np.array(b)
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+    
+    doc_embeddings = embeddings.embed_documents([doc.page_content for doc in docs])
+    semantic_scores = [cosine_sim(query_embedding, de) for de in doc_embeddings]
+    semantic_ranked = sorted(zip(docs, semantic_scores), key=lambda x: x[1], reverse=True)
+    semantic_top = [doc for doc, _ in semantic_ranked[:6]]
+
+    # Stage 2: Cross-encoder precision reranking
     reranker = get_reranker()
-    pairs = [(query, doc.page_content) for doc in docs]
-    scores = reranker.predict(pairs)
-    ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
-    return [doc for doc, _ in ranked[:top_n]]
+    pairs = [(query, doc.page_content) for doc in semantic_top]
+    cross_scores = reranker.predict(pairs)
+    cross_ranked = sorted(zip(semantic_top, cross_scores), key=lambda x: x[1], reverse=True)
+    
+    return [doc for doc, _ in cross_ranked[:top_n]]
 
 async def generate_answer_stream(question: str, user_id: str, session_id: str, memory_session_id: str):
     import asyncio
@@ -565,27 +592,91 @@ async def generate_answer_stream(question: str, user_id: str, session_id: str, m
         db         = load_faiss_cached(VECTOR_PATH, embeddings)
 
         t_ret_start = time.time()
-        docs_task   = asyncio.to_thread(db.similarity_search_with_score, question, k=4)
-        memory_task = asyncio.to_thread(retrieve_relevant_history, user_id, memory_session_id, question, k=4)
-        docs_with_scores, relevant_history = await asyncio.gather(docs_task, memory_task)
+        # Step 1: fetch history first
+        relevant_history = await fetch_full_history(memory_session_id)
+
+        # Step 2: rewrite query if needed
+        ambiguity_check_prompt = f"""Conversation history:
+        {relevant_history}
+
+        Question: {question}
+
+        Does this question contain ambiguous references (pronouns, "it", "this", etc.) that refer to something mentioned in the conversation history? If yes, rewrite it as a standalone question. If no, return the question unchanged.
+        Return ONLY the rewritten or unchanged question, nothing else."""
+
+        retrieval_query = generate_with_mistral(ambiguity_check_prompt, "").strip() if relevant_history else question
+        logger.info(f"Rewrote query: '{question}' → '{retrieval_query}'")
+
+        # Step 3: retrieve docs with rewritten query
+        docs_with_scores = await asyncio.to_thread(db.similarity_search_with_score, retrieval_query, k=12)
         retrieval_lat = round(time.time() - t_ret_start, 3)
 
         docs = [doc for doc, _ in docs_with_scores]
-        docs = rerank(question, docs, top_n=3)
+        
+        seen = set()
+        unique_docs = []
+        for doc in docs:
+            if doc.page_content not in seen:
+                seen.add(doc.page_content)
+                unique_docs.append(doc)
+        docs = unique_docs
+
+        t_rerank_start = time.time()
+
+        # Stage 1: semantic
+        embeddings = get_embeddings()
+        import numpy as np
+        query_embedding = embeddings.embed_query(question)
+        def cosine_sim(a, b):
+            a, b = np.array(a), np.array(b)
+            return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+        doc_embeddings = embeddings.embed_documents([doc.page_content for doc in docs])
+        semantic_scores = [cosine_sim(query_embedding, de) for de in doc_embeddings]
+        semantic_ranked = sorted(zip(docs, semantic_scores), key=lambda x: x[1], reverse=True)
+        semantic_top = [doc for doc, score in semantic_ranked[:6]]
+        semantic_log = [{"content": doc.page_content[:80], "semantic_score": round(score, 4)} for doc, score in semantic_ranked[:6]]
+
+        # Stage 2: cross-encoder
+        reranker = get_reranker()
+        pairs = [(question, doc.page_content) for doc in semantic_top]
+        cross_scores = reranker.predict(pairs)
+        cross_ranked = sorted(zip(semantic_top, cross_scores), key=lambda x: x[1], reverse=True)
+        cross_log = [{"content": doc.page_content[:80], "cross_score": round(float(score), 4)} for doc, score in cross_ranked]
+        docs = [doc for doc, _ in cross_ranked[:3]]
+
+        rerank_lat = round(time.time() - t_rerank_start, 3)
+
 
         if not docs:
             yield "I couldn't find any relevant information in the documents."
             return
 
         context       = "\n\n".join(doc.page_content for doc in docs)
-        history_block = f"\n\nRelevant conversation history:\n{relevant_history}" if relevant_history else ""
-
+        history_block = f"\n\nConversation history:\n{relevant_history}" if relevant_history else ""
         system_prompt =f"""You are a helpful assistant.
-- Answer the question based on the provided context.
+
+Rules:
+- Answer the question based ONLY on the provided context.
 - Be clear and concise.
-- If the context contains relevant information, use it fully even if partial or implicit.
-- If information is genuinely not present, say  exactly: "I don't have enough information to answer this."
 - Answer in the same language as the question.
+- Answer to greetings.
+
+Grounding rules:
+- Use ONLY the information present in the context.
+- Do NOT use prior knowledge or guess.
+- Use the conversation history to resolve what "it", "he", "she", "they" refer to before answering.
+- If the answer is present in the context, you MUST extract it, even if the text is unstructured, partial, or implicit.
+- If the context contains values (prices, dates, numbers), use them EXACTLY as written.
+- If multiple possible answers exist, choose the one most relevant to the question.
+- If the question is ambiguous or missing key details, ask a short clarifying question.
+- If the question is clear but the answer is not present in the context, say EXACTLY: "I don't have enough information to answer this."
+
+Formatting rules:
+- If the answer contains comparative or structured data (prices, features, lists), use a Markdown table (| columns |).
+- If the question asks for a summary, structure the answer with short headings (## Title).
+- Otherwise, respond in concise prose.
+- Do not add any information that is not present in the context.
+
 
 Context:
 {context}{history_block}"""
@@ -639,6 +730,14 @@ Context:
                     },
                 ):
                     with _langfuse.start_as_current_observation(
+                        name="query-rewrite",
+                        as_type="span",
+                        input={"original_query": question, "history": relevant_history},
+                        output={"rewritten_query": retrieval_query},
+                        metadata={"rewritten": retrieval_query != question},
+                    ):
+                        pass
+                    with _langfuse.start_as_current_observation(
                         name="retrieval",
                         as_type="retriever",
                         input={"query": question},
@@ -646,7 +745,21 @@ Context:
                         metadata={"top_k": 4, "latency_s": retrieval_lat},
                     ):
                         pass
-
+                    with _langfuse.start_as_current_observation(
+                        name="reranking",
+                        as_type="span",
+                        input={
+                            "query": question,
+                            "candidates": [doc.page_content[:80] for doc in unique_docs]
+                        },
+                        output={
+                            "stage1_semantic": semantic_log,
+                            "stage2_cross_encoder": cross_log,
+                            "final_top3": [doc.page_content[:80] for doc in docs]
+                        },
+                        metadata={"latency_s": rerank_lat},
+                    ):
+                        pass
                     with _langfuse.start_as_current_observation(
                         name="llm-generation",
                         as_type="generation",

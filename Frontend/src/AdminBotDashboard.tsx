@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+// Frontend/src/AdminBotDashboard.tsx
+import { useState, useEffect, useCallback } from "react";
 import {
   AreaChart, Area,
   XAxis, YAxis,
@@ -13,29 +14,27 @@ interface Props {
 
 const TABS = [
   { key: "overview",  label: "Overview",  icon: "▦" },
+  { key: "settings",  label: "Settings",  icon: "⚙" },
   { key: "documents", label: "Documents", icon: "◈" },
   { key: "feedback",  label: "Feedback",  icon: "✦" },
-  { key: "messages",  label: "Messages",  icon: "✉" },
 ] as const;
 
 type Tab = typeof TABS[number]["key"];
-
-// ── Period filter ─────────────────────────────────────────────────────────────
 type Period = "week" | "month" | "year";
 
+const PRESET_COLORS = [
+  "#7F77DD", "#1D9E75", "#D85A30", "#BA7517",
+  "#0ea5e9", "#ec4899", "#8b5cf6", "#14b8a6",
+];
+
 // ── Chart helpers ─────────────────────────────────────────────────────────────
-type ChartPoint = { date: string; messages: number; sessions: number };
 
 function fmt(d: Date, opts: Intl.DateTimeFormatOptions) {
   return d.toLocaleDateString("en-US", opts);
 }
 
-function buildMsgChartData(
-  raw: { date: string; count: number }[],
-  period: Period,
-  offset: number
-): { label: string; messages: number }[] {
-  const today = new Date();
+function buildMsgChartData(raw: { date: string; count: number }[], period: Period, offset: number) {
+  const today  = new Date();
   const rawMap: Record<string, number> = {};
   raw.forEach(r => { rawMap[r.date.slice(0, 10)] = r.count; });
 
@@ -43,13 +42,12 @@ function buildMsgChartData(
     const start = new Date(today);
     start.setDate(today.getDate() - today.getDay() + offset * 7);
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
+      const d = new Date(start); d.setDate(start.getDate() + i);
       return { label: fmt(d, { weekday: "short" }), messages: rawMap[d.toISOString().slice(0, 10)] ?? 0 };
     });
   }
   if (period === "month") {
-    const ref = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const ref  = new Date(today.getFullYear(), today.getMonth() + offset, 1);
     const days = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
     return Array.from({ length: days }, (_, i) => {
       const d = new Date(ref.getFullYear(), ref.getMonth(), i + 1);
@@ -70,8 +68,7 @@ function periodLabel(period: Period, offset: number): string {
   if (period === "week") {
     const start = new Date(today);
     start.setDate(today.getDate() - today.getDay() + offset * 7);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
+    const end = new Date(start); end.setDate(start.getDate() + 6);
     return `${fmt(start, { month: "short", day: "numeric" })} – ${fmt(end, { month: "short", day: "numeric" })}`;
   }
   if (period === "month") {
@@ -91,18 +88,13 @@ const MsgTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 // ── Sub-components ────────────────────────────────────────────────────────────
+
 function StatCard({ label, value, sub, accent }: { label: string; value: string | number; sub?: string; accent?: string }) {
   return (
     <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 20px" }}>
-      <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 600, color: accent || "var(--text)", lineHeight: 1, marginBottom: sub ? 4 : 0 }}>
-        {value}
-      </div>
+      <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 600, color: accent || "var(--text)", lineHeight: 1, marginBottom: sub ? 4 : 0 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 4 }}>{sub}</div>}
     </div>
   );
@@ -110,16 +102,9 @@ function StatCard({ label, value, sub, accent }: { label: string; value: string 
 
 function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "10px 0", borderBottom: "1px solid var(--border)", gap: 16,
-    }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)", gap: 16 }}>
       <span style={{ fontSize: 13, color: "var(--text3)", flexShrink: 0 }}>{label}</span>
-      <span style={{
-        fontSize: 13, color: "var(--text2)",
-        fontFamily: mono ? "'DM Mono', monospace" : "inherit",
-        textAlign: "right", wordBreak: "break-all",
-      }}>
+      <span style={{ fontSize: 13, color: "var(--text2)", fontFamily: mono ? "'DM Mono', monospace" : "inherit", textAlign: "right", wordBreak: "break-all" }}>
         {value}
       </span>
     </div>
@@ -134,40 +119,243 @@ function StatusDot({ active }: { active: boolean }) {
       background: active ? "rgba(29,158,117,0.12)" : "rgba(216,90,48,0.1)",
       color: active ? "#1D9E75" : "#D85A30",
     }}>
-      <span style={{
-        width: 6, height: 6, borderRadius: "50%",
-        background: active ? "#1D9E75" : "#D85A30",
-        boxShadow: active ? "0 0 0 2px rgba(29,158,117,0.25)" : "none",
-      }} />
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: active ? "#1D9E75" : "#D85A30" }} />
       {active ? "Active" : "Inactive"}
     </span>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
-  const [tab, setTab]             = useState<Tab>("overview");
-  const [bot, setBot]             = useState<any>(initialBot);
-  const [feedback, setFeedback]   = useState<any[]>([]);
-  const [documents, setDocuments] = useState<any[]>([]);
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [loading, setLoading]     = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [chartPeriod, setChartPeriod] = useState<Period>("week");
-  const [chartOffset, setChartOffset] = useState(0);
+// ── Settings panel (admin can view + update bot config) ───────────────────────
+
+function SettingsPanel({ bot, onUpdated }: { bot: any; onUpdated: (updated: any) => void }) {
+  const [name,          setName]          = useState(bot.name || "");
+  const [accentColor,   setAccentColor]   = useState(bot.accent_color || "#7F77DD");
+  const [welcomeMsg,    setWelcomeMsg]    = useState(bot.welcome_message || "Hi! How can I help you today?");
+  const [systemPrompt,  setSystemPrompt]  = useState(bot.system_prompt || "You are a helpful assistant.");
+  const [allowedOrigin, setAllowedOrigin] = useState(bot.allowed_origin || "");
+  const [saving,        setSaving]        = useState(false);
+  const [saved,         setSaved]         = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
 
   const adminToken = () => localStorage.getItem("admin_token");
 
-  const fetchBot = async () => {
-    const token = adminToken();
-    if (!token) return;
-    const res = await fetch(`http://localhost:8000/admin/bots/${initialBot.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setBot(data);
-      localStorage.setItem("admin_selected_chatbot", JSON.stringify(data));
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      // Admin uses the same PATCH /widgets/bots/{id} endpoint
+      // but must impersonate via the owner's token — not available to admin directly.
+      // Instead we call a direct DB update via admin endpoint if available,
+      // or we show a read-only note. For now we call the standard patch endpoint
+      // with the admin token (works if your backend allows admin to patch any bot).
+      const res = await fetch(`http://localhost:8000/widgets/bots/${bot.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken()}`,
+        },
+        body: JSON.stringify({
+          name:            name.trim(),
+          accent_color:    accentColor,
+          welcome_message: welcomeMsg.trim(),
+          system_prompt:   systemPrompt.trim(),
+          allowed_origin:  allowedOrigin.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const e = await res.json();
+        throw new Error(e.detail || "Update failed");
+      }
+      const updated = await res.json();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      onUpdated({ ...bot, ...updated, accent_color: accentColor, welcome_message: welcomeMsg });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* Bot name */}
+      <SettingRow label="Bot name" hint="Display name shown in widget header.">
+        <input
+          className="cl-input"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="My Bot"
+          disabled={saving}
+        />
+      </SettingRow>
+
+      {/* Welcome message */}
+      <SettingRow label="Welcome message" hint="First message users see when the widget opens.">
+        <textarea
+          className="cl-input"
+          rows={3}
+          value={welcomeMsg}
+          onChange={e => setWelcomeMsg(e.target.value)}
+          placeholder="Hi! How can I help you today?"
+          disabled={saving}
+          style={{ resize: "vertical" }}
+        />
+      </SettingRow>
+
+      {/* System prompt */}
+      <SettingRow label="System prompt" hint="Instructions that shape how the bot behaves.">
+        <textarea
+          className="cl-input"
+          rows={5}
+          value={systemPrompt}
+          onChange={e => setSystemPrompt(e.target.value)}
+          disabled={saving}
+          style={{ resize: "vertical" }}
+        />
+      </SettingRow>
+
+      {/* Allowed origin */}
+      <SettingRow label="Allowed origin" hint="Leave empty to allow all origins.">
+        <input
+          className="cl-input"
+          value={allowedOrigin}
+          onChange={e => setAllowedOrigin(e.target.value)}
+          placeholder="https://example.com"
+          disabled={saving}
+        />
+      </SettingRow>
+
+      {/* Accent color */}
+      <SettingRow label="Accent color" hint="Widget header and button color.">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {PRESET_COLORS.map(c => (
+            <button
+              key={c}
+              onClick={() => setAccentColor(c)}
+              style={{
+                width: 28, height: 28, borderRadius: 6,
+                background: c, border: "none", cursor: "pointer",
+                boxShadow: accentColor === c ? `0 0 0 2px var(--bg2), 0 0 0 4px ${c}` : "none",
+                transform: accentColor === c ? "scale(1.15)" : "scale(1)",
+                transition: "transform 0.15s",
+              }}
+            />
+          ))}
+          <label style={{
+            width: 28, height: 28, borderRadius: 6,
+            border: "2px dashed var(--border2)", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 14, color: "var(--text3)", position: "relative", overflow: "hidden",
+          }}>
+            <input
+              type="color"
+              value={accentColor}
+              onChange={e => setAccentColor(e.target.value)}
+              style={{ position: "absolute", opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
+            />
+            +
+          </label>
+          <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text2)", padding: "3px 8px", background: "var(--bg3)", borderRadius: 5, border: "1px solid var(--border)" }}>
+            {accentColor}
+          </span>
+        </div>
+      </SettingRow>
+
+      {/* Live preview */}
+      <SettingRow label="Preview">
+        <div style={{
+          background: accentColor,
+          borderRadius: 10, padding: "10px 16px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          color: "#fff", fontSize: 13, fontWeight: 600,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>◉</div>
+            {name || "Bot name"}
+          </div>
+          <span style={{ opacity: 0.7, fontSize: 16 }}>✕</span>
+        </div>
+        <div style={{ background: "var(--bg3)", borderRadius: "0 0 10px 10px", padding: "10px 14px", border: "1px solid var(--border)", borderTop: "none" }}>
+          <div style={{ fontSize: 12, color: "var(--text2)", fontStyle: "italic" }}>
+            💬 {welcomeMsg || "Welcome message preview"}
+          </div>
+        </div>
+      </SettingRow>
+
+      {error && <div className="cl-error">{error}</div>}
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button
+          className="cl-btn-primary"
+          onClick={handleSave}
+          disabled={saving}
+          style={{ padding: "9px 24px" }}
+        >
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+        {saved && (
+          <span style={{ fontSize: 12, color: "#1D9E75", display: "flex", alignItems: "center", gap: 4 }}>
+            ✓ Saved
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          {label}
+        </label>
+        {hint && <p style={{ fontSize: 11, color: "var(--text3)", marginTop: 2, lineHeight: 1.5 }}>{hint}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
+  const [tab,         setTab]         = useState<Tab>("overview");
+  const [bot,         setBot]         = useState<any>(initialBot);
+  const [feedback,    setFeedback]    = useState<any[]>([]);
+  const [documents,   setDocuments]   = useState<any[]>([]);
+  const [analytics,   setAnalytics]   = useState<any>(null);
+  const [loading,     setLoading]     = useState(false);
+  const [refreshKey,  setRefreshKey]  = useState(0);
+  const [chartPeriod, setChartPeriod] = useState<Period>("week");
+  const [chartOffset, setChartOffset] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting,      setDeleting]      = useState(false);
+
+  const adminToken = () => localStorage.getItem("admin_token");
+
+  const accent = bot.accent_color || "#7F77DD";
+
+  const handleDeleteBot = async () => {
+    setDeleting(true);
+    try {
+      const res = await fetch(`http://localhost:8000/admin/bots/${initialBot.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${adminToken()}` },
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || "Delete failed");
+      }
+      onBack(); // navigate back to bot list after deletion
+    } catch (err: any) {
+      alert("Error deleting bot: " + err.message);
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   };
 
@@ -175,7 +363,6 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
     setLoading(true);
     try {
       if (t === "overview") {
-        await fetchBot();
         setAnalytics(null);
         const res = await fetch(`http://localhost:8000/admin/bots/${initialBot.id}/analytics`, {
           headers: { Authorization: `Bearer ${adminToken()}` },
@@ -183,14 +370,12 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
         if (res.ok) setAnalytics(await res.json());
       }
       if (t === "feedback") {
-        setFeedback([]);
         const data = await api.getAdminFeedback();
         setFeedback((data.feedback || []).filter((f: any) => f.bot_id === initialBot.id));
       }
       if (t === "documents") {
-        setDocuments([]);
         const data = await api.getAdminDocuments();
-        setDocuments((data.documents || []).filter((d: any) => String(d.user_id) === String(initialBot.id)));
+        setDocuments((data.documents || []).filter((d: any) => String(d.bot_id) === String(initialBot.id)));
       }
     } finally {
       setLoading(false);
@@ -199,31 +384,25 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
 
   useEffect(() => { loadTab(tab); }, [tab, refreshKey, loadTab]);
 
-  const owner = bot.owner || {};
-
-  // Build chart data from analytics
   const chartData = analytics
     ? buildMsgChartData(analytics.messages_per_day ?? [], chartPeriod, chartOffset)
     : [];
+
+  const owner = bot.owner || {};
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
 
       {/* ── Header ── */}
-      <div style={{
-        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
-        marginBottom: 28, gap: 16, flexWrap: "wrap",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button
             onClick={onBack}
             style={{
               background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 8,
               color: "var(--text2)", cursor: "pointer", fontSize: 13, padding: "7px 12px",
-              display: "flex", alignItems: "center", gap: 6, transition: "border-color 0.15s, color 0.15s", flexShrink: 0,
+              display: "flex", alignItems: "center", gap: 6,
             }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--border2)"; e.currentTarget.style.color = "var(--text)"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)";  e.currentTarget.style.color = "var(--text2)"; }}
           >
             ← Back
           </button>
@@ -242,26 +421,86 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {/* Bot icon with accent */}
             <div style={{
               width: 44, height: 44, borderRadius: 12,
-              background: "rgba(127,119,221,0.15)", border: "1px solid rgba(127,119,221,0.25)",
+              background: `${accent}22`,
+              border: `1px solid ${accent}44`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 18, color: "var(--accent)", flexShrink: 0,
+              fontSize: 18, color: accent, flexShrink: 0,
             }}>
               ◉
             </div>
             <div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.02em", lineHeight: 1.2 }}>
-                {bot.name}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.02em" }}>
+                  {bot.name}
+                </span>
+                {/* Accent color swatch */}
+                <span
+                  title={`Accent color: ${accent}`}
+                  style={{
+                    width: 12, height: 12, borderRadius: 3,
+                    background: accent, border: "1px solid rgba(0,0,0,0.15)",
+                    display: "inline-block",
+                  }}
+                />
               </div>
               <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 3 }}>
                 {owner.email || "—"}
               </div>
+              {/* Welcome message preview in header */}
+              {bot.welcome_message && (
+                <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 2, fontStyle: "italic" }}>
+                  💬 {bot.welcome_message.length > 60 ? bot.welcome_message.slice(0, 60) + "…" : bot.welcome_message}
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        <StatusDot active={bot.is_active !== false} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <StatusDot active={bot.is_active !== false} />
+          {confirmDelete ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--danger)" }}>Delete bot?</span>
+              <button
+                onClick={handleDeleteBot}
+                disabled={deleting}
+                style={{
+                  background: "rgba(216,90,48,0.15)", border: "1px solid rgba(216,90,48,0.4)",
+                  color: "#D85A30", borderRadius: 6, padding: "4px 12px",
+                  cursor: "pointer", fontSize: 12, fontWeight: 600,
+                }}
+              >
+                {deleting ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                style={{
+                  background: "var(--bg2)", border: "1px solid var(--border)",
+                  color: "var(--text2)", borderRadius: 6, padding: "4px 12px",
+                  cursor: "pointer", fontSize: 12,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              style={{
+                background: "none", border: "1px solid rgba(216,90,48,0.35)",
+                color: "#D85A30", borderRadius: 7, padding: "6px 14px",
+                cursor: "pointer", fontSize: 12,
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(216,90,48,0.08)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "none")}
+            >
+              Delete bot
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Tabs ── */}
@@ -278,7 +517,7 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
               display: "flex", alignItems: "center", gap: 7, padding: "7px 14px",
               borderRadius: 7, border: "none",
               background: tab === key ? "var(--bg)" : "transparent",
-              color: tab === key ? "var(--text)" : "var(--text3)",
+              color: tab === key ? accent : "var(--text3)",
               fontSize: 13, fontFamily: "inherit", fontWeight: tab === key ? 500 : 400,
               cursor: "pointer", transition: "background 0.15s, color 0.15s",
               boxShadow: tab === key ? "0 1px 3px rgba(0,0,0,0.15)" : "none", whiteSpace: "nowrap",
@@ -290,11 +529,8 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
         ))}
       </div>
 
-      {/* ── Loading ── */}
       {loading && (
-        <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>
-          Loading…
-        </div>
+        <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text3)", fontSize: 13 }}>Loading…</div>
       )}
 
       {/* ════ OVERVIEW ════ */}
@@ -320,15 +556,11 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
             />
           </div>
 
-          {/* ── Activity chart ── */}
+          {/* Activity chart */}
           <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "18px 20px" }}>
-            {/* Header row */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
-                Messages over time
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Messages over time</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                {/* Period pills */}
                 <div style={{ display: "flex", gap: 4 }}>
                   {(["week", "month", "year"] as Period[]).map(p => (
                     <button
@@ -337,9 +569,9 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
                       style={{
                         padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 500,
                         border: "1px solid",
-                        borderColor: chartPeriod === p ? "var(--accent)" : "var(--border)",
-                        background: chartPeriod === p ? "rgba(127,119,221,0.15)" : "var(--bg3)",
-                        color: chartPeriod === p ? "var(--accent-light, #AFA9EC)" : "var(--text3)",
+                        borderColor: chartPeriod === p ? accent : "var(--border)",
+                        background: chartPeriod === p ? `${accent}18` : "var(--bg3)",
+                        color: chartPeriod === p ? accent : "var(--text3)",
                         cursor: "pointer", fontFamily: "inherit",
                       }}
                     >
@@ -347,13 +579,12 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
                     </button>
                   ))}
                 </div>
-                {/* Nav arrows + label */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button
                     onClick={() => setChartOffset(o => o - 1)}
                     style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}
                   >←</button>
-                  <span style={{ fontSize: 12, color: "var(--text2)", minWidth: 130, textAlign: "center", fontWeight: 500 }}>
+                  <span style={{ fontSize: 11, color: "var(--text2)", minWidth: 130, textAlign: "center", fontWeight: 500 }}>
                     {periodLabel(chartPeriod, chartOffset)}
                   </span>
                   <button
@@ -364,54 +595,45 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
                 </div>
               </div>
             </div>
-
             <ResponsiveContainer width="100%" height={190}>
               <AreaChart data={chartData} margin={{ left: -10, right: 4 }}>
                 <defs>
                   <linearGradient id="gMsgAdmin" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#7F77DD" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#7F77DD" stopOpacity={0} />
+                    <stop offset="5%"  stopColor={accent} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={accent} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text3)" }} interval={chartPeriod === "month" ? 4 : 0} />
                 <YAxis tick={{ fontSize: 10, fill: "var(--text3)" }} width={28} />
                 <Tooltip content={<MsgTooltip />} />
-                <Area type="monotone" dataKey="messages" stroke="#7F77DD" fill="url(#gMsgAdmin)" strokeWidth={2} dot={chartPeriod === "week"} />
+                <Area type="monotone" dataKey="messages" stroke={accent} fill="url(#gMsgAdmin)" strokeWidth={2} dot={chartPeriod === "week"} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
 
+          {/* Bot info + Owner */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-
-            {/* Bot info */}
             <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "18px 20px" }}>
-              <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>
-                Bot details
-              </div>
+              <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>Bot details</div>
               <InfoRow label="Bot ID"         value={bot.id}   mono />
-              <InfoRow label="Created"        value={
-                bot.created_at
-                  ? new Date(bot.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-                  : "—"
-              } />
+              <InfoRow label="Accent color"   value={accent} />
+              <InfoRow label="Welcome msg"    value={bot.welcome_message || "—"} />
               <InfoRow label="Allowed origin" value={bot.allowed_origin || "Any origin"} />
+              <InfoRow label="Created"        value={bot.created_at ? new Date(bot.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—"} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", gap: 16 }}>
                 <span style={{ fontSize: 13, color: "var(--text3)" }}>Status</span>
                 <StatusDot active={bot.is_active !== false} />
               </div>
             </div>
 
-            {/* Owner info */}
             <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "18px 20px" }}>
-              <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>
-                Owner
-              </div>
+              <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14 }}>Owner</div>
               {(owner.name && owner.name !== "—") || (owner.email && owner.email !== "—") ? (
                 <>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
                     <div style={{
                       width: 36, height: 36, borderRadius: "50%",
-                      background: "rgba(127,119,221,0.15)", color: "var(--accent-light)",
+                      background: `${accent}22`, color: accent,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 13, fontWeight: 600, flexShrink: 0,
                     }}>
@@ -430,6 +652,7 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
             </div>
           </div>
 
+          {/* Unanswered questions */}
           {analytics?.unanswered_questions?.length > 0 && (
             <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "18px 20px" }}>
               <div style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -440,10 +663,7 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {analytics.unanswered_questions.slice(0, 5).map((q: any, i: number) => (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "flex-start", gap: 10,
-                    padding: "10px 12px", background: "var(--bg3)", borderRadius: 8, fontSize: 13,
-                  }}>
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--bg3)", borderRadius: 8, fontSize: 13 }}>
                     <span style={{ color: "#D85A30", flexShrink: 0, marginTop: 1, fontSize: 12 }}>?</span>
                     <span style={{ color: "var(--text2)", lineHeight: 1.5 }}>{q.question}</span>
                   </div>
@@ -451,6 +671,13 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ════ SETTINGS ════ */}
+      {!loading && tab === "settings" && (
+        <div style={{ maxWidth: 680 }}>
+          <SettingsPanel bot={bot} onUpdated={(updated) => setBot(updated)} />
         </div>
       )}
 
@@ -464,31 +691,15 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {documents.map((d) => (
-                <div key={d.id} style={{
-                  display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-                  background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10,
-                }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-                    background: d.type === "url" ? "rgba(127,119,221,0.1)" : "rgba(29,158,117,0.1)",
-                    color: d.type === "url" ? "var(--accent)" : "#1D9E75",
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
-                  }}>
+                <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0, background: d.type === "url" ? `${accent}18` : "rgba(29,158,117,0.1)", color: d.type === "url" ? accent : "#1D9E75", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
                     {d.type === "url" ? "🔗" : "◈"}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {d.name}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 2 }}>
-                      {d.size} · {d.chunks || 0} chunks · {d.type?.toUpperCase()}
-                    </div>
+                    <div style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 2 }}>{d.size} · {d.chunks || 0} chunks · {d.type?.toUpperCase()}</div>
                   </div>
-                  <span style={{
-                    padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    background: d.status === "indexed" ? "rgba(29,158,117,0.12)" : "rgba(186,117,23,0.12)",
-                    color: d.status === "indexed" ? "#1D9E75" : "#BA7517",
-                  }}>
+                  <span style={{ padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: d.status === "indexed" ? "rgba(29,158,117,0.12)" : "rgba(186,117,23,0.12)", color: d.status === "indexed" ? "#1D9E75" : "#BA7517" }}>
                     {d.status}
                   </span>
                 </div>
@@ -507,12 +718,9 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
             </div>
           ) : (
             <>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 20, padding: "16px 20px",
-                background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 16,
-              }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, padding: "16px 20px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 16 }}>
                 <div>
-                  <div style={{ fontSize: 32, fontWeight: 700, color: "var(--accent)", lineHeight: 1 }}>
+                  <div style={{ fontSize: 32, fontWeight: 700, color: accent, lineHeight: 1 }}>
                     {(feedback.reduce((s, f) => s + (f.rating || 0), 0) / feedback.length).toFixed(1)}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 3 }}>Average rating</div>
@@ -524,48 +732,26 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
                 </div>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 3 }}>
                   {[1,2,3,4,5].map(s => (
-                    <span key={s} style={{
-                      fontSize: 20,
-                      color: s <= Math.round(feedback.reduce((a, f) => a + (f.rating||0), 0) / feedback.length) ? "var(--accent)" : "var(--bg3)",
-                    }}>★</span>
+                    <span key={s} style={{ fontSize: 20, color: s <= Math.round(feedback.reduce((a, f) => a + (f.rating||0), 0) / feedback.length) ? accent : "var(--bg3)" }}>★</span>
                   ))}
                 </div>
               </div>
-
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {feedback.map((item: any) => (
-                  <div key={item.id} style={{
-                    background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px",
-                  }}>
+                  <div key={item.id} style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{
-                          width: 28, height: 28, borderRadius: "50%",
-                          background: "rgba(127,119,221,0.15)", color: "var(--accent-light)",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 11, fontWeight: 600,
-                        }}>
+                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: `${accent}18`, color: accent, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>
                           {(item.user_name || "?").charAt(0).toUpperCase()}
                         </div>
                         <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{item.user_name || "Anonymous"}</span>
-                        <span style={{
-                          padding: "2px 8px", borderRadius: 20,
-                          background: "rgba(127,119,221,0.1)", color: "var(--accent-light)", fontSize: 11,
-                        }}>
-                          {item.category}
-                        </span>
+                        <span style={{ padding: "2px 8px", borderRadius: 20, background: `${accent}18`, color: accent, fontSize: 11 }}>{item.category}</span>
                       </div>
                       <div style={{ display: "flex", gap: 2 }}>
-                        {[1,2,3,4,5].map(s => (
-                          <span key={s} style={{ fontSize: 14, color: s <= item.rating ? "var(--accent)" : "var(--bg3)" }}>★</span>
-                        ))}
+                        {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 14, color: s <= item.rating ? accent : "var(--bg3)" }}>★</span>)}
                       </div>
                     </div>
-                    {item.comment && (
-                      <p style={{ fontSize: 13, color: "var(--text2)", margin: 0, lineHeight: 1.55 }}>
-                        "{item.comment}"
-                      </p>
-                    )}
+                    {item.comment && <p style={{ fontSize: 13, color: "var(--text2)", margin: 0, lineHeight: 1.55 }}>"{item.comment}"</p>}
                     <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 8 }}>
                       {item.created_at ? new Date(item.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : ""}
                     </div>

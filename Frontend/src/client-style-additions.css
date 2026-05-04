@@ -1,0 +1,96 @@
+/* client-style.css — append these rules at the bottom of your existing client-style.css */
+
+/* ── Bot selector grid ─────────────────────────────────────────────────────── */
+
+.bot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+/* ── Bot create form responsive ────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Stack the two-column create form */
+  .bot-create-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Hide the preview panel on mobile */
+  .bot-create-preview {
+    display: none !important;
+  }
+}
+
+/* ── Sidebar bot name label ────────────────────────────────────────────────── */
+
+.cl-nav-bot-label {
+  padding: 8px 12px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Back button used in BotCreate ─────────────────────────────────────────── */
+
+.cl-back-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text2);
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cl-back-btn:hover {
+  border-color: var(--border2);
+  color: var(--text);
+}
+
+/* ── Color swatch row ──────────────────────────────────────────────────────── */
+
+.color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.color-swatch:hover {
+  transform: scale(1.12);
+}
+
+/* ── Widget mini preview ───────────────────────────────────────────────────── */
+
+.widget-preview-shell {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Responsive: stack bot-create on tablet ────────────────────────────────── */
+
+@media (max-width: 900px) {
+  /* The two-column layout used in BotCreate.tsx */
+  div[style*="grid-template-columns: 1fr 340px"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* Hide sticky preview on small screens */
+  div[style*="position: sticky"] {
+    display: none !important;
+  }
+}

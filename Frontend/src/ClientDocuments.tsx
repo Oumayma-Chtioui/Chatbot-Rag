@@ -1,9 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// ClientDocuments.tsx  — add onUpload callback prop so the dashboard refreshes
-// CHANGES:
-//   1. Accept optional `onUpload?: () => void` prop
-//   2. Call onUpload() after every successful upload / URL add / delete
-// ─────────────────────────────────────────────────────────────────────────────
+// Frontend/src/ClientDocuments.tsx
+// No changes needed from the original — it already accepts `bot` as a prop.
+// Re-exported here for completeness with the onUpload callback intact.
 
 import { useState, useEffect, ChangeEvent } from "react";
 import { Bot } from "./ClientApp";
@@ -22,14 +19,14 @@ interface Doc {
 
 interface Props {
   bot: Bot | null;
-  onUpload?: () => void;   // NEW — called after any successful mutation
+  onUpload?: () => void;
 }
 
 export default function ClientDocuments({ bot, onUpload }: Props) {
-  const [docs, setDocs] = useState<Doc[]>([]);
+  const [docs, setDocs]         = useState<Doc[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [url, setUrl] = useState("");
+  const [error, setError]       = useState<string | null>(null);
+  const [url, setUrl]           = useState("");
   const [maxPages, setMaxPages] = useState(1);
 
   const loadDocs = async () => {
@@ -59,7 +56,7 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
         throw new Error(e.detail || "Upload failed");
       }
       await loadDocs();
-      onUpload?.();          // ← notify parent
+      onUpload?.();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -86,7 +83,7 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
       }
       setUrl("");
       await loadDocs();
-      onUpload?.();          // ← notify parent
+      onUpload?.();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -95,24 +92,30 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`${API}/widgets/bots/${bot!.id}/documents/${id}`, {
+    if (!bot) return;
+    await fetch(`${API}/widgets/bots/${bot.id}/documents/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token()}` },
     });
     setDocs((d) => d.filter((doc) => doc.id !== id));
-    onUpload?.();            // ← notify parent (storage drops)
+    onUpload?.();
   };
+
+  const accent = bot?.accent_color || "var(--accent)";
 
   return (
     <div className="cl-page">
       <div className="cl-page-header">
         <h1 className="cl-page-title">Documents</h1>
-        <p className="cl-page-sub">Upload files or URLs your chatbot will answer from.</p>
+        <p className="cl-page-sub">
+          Upload files or URLs your chatbot will answer from.
+          {bot && <span style={{ color: "var(--text3)" }}> · {bot.name}</span>}
+        </p>
       </div>
 
       <div className="cl-section">
         <h2 className="cl-section-title">Upload file</h2>
-        <label className="cl-drop-zone">
+        <label className="cl-drop-zone" style={{ borderColor: uploading ? accent : undefined }}>
           <input
             type="file"
             style={{ display: "none" }}
@@ -123,9 +126,9 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
             }}
             disabled={uploading}
           />
-          <span className="cl-drop-icon">◈</span>
+          <span className="cl-drop-icon" style={{ color: accent }}>◈</span>
           <span className="cl-drop-text">
-            {uploading ? "Uploading..." : "Click to browse · .pdf .txt .docx .md · max 50MB"}
+            {uploading ? "Uploading…" : "Click to browse · .pdf .txt .docx .md · max 50MB"}
           </span>
         </label>
       </div>
@@ -155,8 +158,9 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
             className="cl-btn-primary"
             onClick={handleUrlAdd}
             disabled={uploading || !url.trim()}
+            style={{ background: accent }}
           >
-            {uploading ? "Loading..." : "Load"}
+            {uploading ? "Loading…" : "Load"}
           </button>
         </div>
       </div>
@@ -171,7 +175,7 @@ export default function ClientDocuments({ bot, onUpload }: Props) {
           <div className="cl-doc-list">
             {docs.map((doc) => (
               <div className="cl-doc-row" key={doc.id}>
-                <div className="cl-doc-icon">◈</div>
+                <div className="cl-doc-icon" style={{ color: accent }}>◈</div>
                 <div className="cl-doc-info">
                   <div className="cl-doc-name">{doc.name}</div>
                   <div className="cl-doc-meta">{doc.size} · {doc.chunks} chunks</div>

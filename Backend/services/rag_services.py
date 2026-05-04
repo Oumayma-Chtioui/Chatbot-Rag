@@ -147,8 +147,9 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
 
         # ================= CHUNKING =================
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=100
+            chunk_size=1000,
+            chunk_overlap=100,
+            separators=["\n\n", "\n", ".", " ", ""]
         )
 
         chunks = []

@@ -11,7 +11,7 @@ interface Ticket {
   ticket_id:    string;
   question:     string;
   user_email:   string;
-  status:       "pending_verification" | "pending_response" | "answered";
+  status:       "pending_response" | "answered";
   created_at:   string;
   answered_at:  string | null;
   answer:       string | null;
@@ -22,13 +22,7 @@ interface Ticket {
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
 
 const STATUS_META = {
-  pending_verification: {
-    label: "Pending verification",
-    short: "Verifying",
-    color: "var(--warn)",
-    bg:    "rgba(186,117,23,0.12)",
-    dot:   "#BA7517",
-  },
+  
   pending_response: {
     label: "Response required",
     short: "Needs reply",
@@ -275,7 +269,6 @@ const ClientTickets: React.FC = () => {
   /* counts */
   const counts = {
     all:                  tickets.length,
-    pending_verification: tickets.filter(t => t.status === "pending_verification").length,
     pending_response:     tickets.filter(t => t.status === "pending_response").length,
     answered:             tickets.filter(t => t.status === "answered").length,
   };
@@ -354,7 +347,6 @@ const ClientTickets: React.FC = () => {
             {([
               ["all",                  "All",         counts.all],
               ["pending_response",     "Needs reply", counts.pending_response],
-              ["pending_verification", "Verifying",   counts.pending_verification],
               ["answered",             "Answered",    counts.answered],
             ] as [Ticket["status"] | "all", string, number][]).map(([key, label, count]) => (
               <button
@@ -617,19 +609,6 @@ const ClientTickets: React.FC = () => {
                   </div>
                 )}
 
-                {/* pending_verification: info box */}
-                {selected.status === "pending_verification" && (
-                  <div style={{
-                    background: "rgba(186,117,23,0.08)",
-                    border: "1px solid rgba(186,117,23,0.22)",
-                    borderRadius: 10, padding: "14px 16px",
-                    display: "flex", gap: 12, alignItems: "flex-start",
-                    fontSize: 13, color: "var(--text2)",
-                  }}>
-                    <span style={{ fontSize: 16, flexShrink: 0 }}>⏳</span>
-                    <span>This ticket is being verified by the system. Once confirmed, it will require your response.</span>
-                  </div>
-                )}
 
                 {/* pending_response: reply form */}
                 {selected.status === "pending_response" && !sent && (

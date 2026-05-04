@@ -42,7 +42,6 @@ app.include_router(sessions.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
-app.include_router(widgets.router)
 
 
 # Widget routers

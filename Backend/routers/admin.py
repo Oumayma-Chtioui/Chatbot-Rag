@@ -537,6 +537,9 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
             "owner_email":     owner_email or "—",
             "owner":           {"name": owner_name or "—", "email": owner_email or "—"},
             "allowed_origin":  bot.allowed_origin,
+            "accent_color":    getattr(bot, "accent_color", "#7F77DD") or "#7F77DD",
+            "welcome_message": getattr(bot, "welcome_message", "Hi! How can I help you today?") or "Hi! How can I help you today?",
+            "system_prompt":   getattr(bot, "system_prompt", "You are a helpful assistant.") or "You are a helpful assistant.",
             "is_active":       bot.is_active,
             "total_messages":  total_msgs,
             "message_count":   total_msgs,
@@ -794,24 +797,29 @@ def get_users(admin=Depends(require_admin), db: Session = Depends(get_db)):
 
     result = []
     for u in users:
-        bot = db.query(WidgetBot).filter_by(owner_id=u.id, is_active=True).first()
+        user_bots     = db.query(WidgetBot).filter_by(owner_id=u.id, is_active=True).all()
         session_count = db.query(func.count(ChatSessionModel.id)).filter_by(user_id=u.id).scalar() or 0
-        display_name  = getattr(u, "name", None) or getattr(u, "name", None) or ""
+        display_name  = getattr(u, "name", None) or ""
 
         result.append({
-            "id":           u.id,
-            "name":         display_name,
-            "email":        u.email,
-            "is_admin":     u.is_admin,
-            "is_verified":  u.is_verified,
-            "created_at":   u.created_at.isoformat() if u.created_at else None,
+            "id":            u.id,
+            "name":          display_name,
+            "email":         u.email,
+            "is_admin":      u.is_admin,
+            "is_verified":   u.is_verified,
+            "created_at":    u.created_at.isoformat() if u.created_at else None,
             "session_count": session_count,
-            "bot": {
-                "id":            bot.id,
-                "name":          bot.name,
-                "doc_count":     bot.docs_indexed or 0,
-                "message_count": mongo_msg_counts.get(bot.id, 0),
-            } if bot else None,
+            # Full list of bots — AdminUsers2.tsx iterates over this
+            "bots": [
+                {
+                    "id":            b.id,
+                    "name":          b.name,
+                    "doc_count":     b.docs_indexed or 0,
+                    "message_count": mongo_msg_counts.get(b.id, 0),
+                    "accent_color":  getattr(b, "accent_color", "#7F77DD") or "#7F77DD",
+                }
+                for b in user_bots
+            ],
         })
     return result
 
@@ -883,11 +891,64 @@ def get_bot_analytics_admin(
 def get_all_documents(admin=Depends(require_admin)):
     from database import documents_collection
     docs = list(documents_collection.find({}, {"_id": 0}).limit(500))
+    # Documents are stored with user_id = bot_id throughout the codebase.
+    # Expose bot_id explicitly so the frontend can filter by it.
+    for d in docs:
+        if "bot_id" not in d and "user_id" in d:
+            d["bot_id"] = d["user_id"]
     return {"documents": docs}
+
+@router.delete("/bots/{bot_id}")
+def admin_delete_bot(
+    bot_id: str,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Hard-delete a bot regardless of ownership.
+    Cleans up: Mongo messages, Mongo feedback, API keys (SQL),
+    FAISS vector store, and the bot row itself.
+    """
+    import shutil
+
+    bot = db.query(WidgetBot).filter_by(id=bot_id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # 1. MongoDB — messages & feedback
+    try:
+        mongodb["widget_messages"].delete_many({"bot_id": bot_id})
+        mongodb["widget_feedback"].delete_many({"bot_id": bot_id})
+    except Exception:
+        pass
+
+    # 2. MongoDB — documents metadata
+    try:
+        from database import documents_collection
+        documents_collection.delete_many({"user_id": bot_id})
+    except Exception:
+        pass
+
+    # 3. FAISS vector store (stored under vector_store/user_{bot_id}/)
+    try:
+        vector_root = os.path.join(os.getcwd(), "vector_store", f"user_{bot_id}")
+        if os.path.isdir(vector_root):
+            shutil.rmtree(vector_root, ignore_errors=True)
+    except Exception:
+        pass
+
+    # 4. SQL — API keys, then the bot row
+    db.query(WidgetApiKey).filter(WidgetApiKey.bot_id == bot_id).delete(synchronize_session=False)
+    db.delete(bot)
+    db.commit()
+
+    return {"ok": True, "deleted": bot_id}
+
+
 
 @router.delete("/users/{user_id}")
 def delete_user(
-    user_id: str,
+    user_id: int,
     admin=Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -895,8 +956,7 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Clean up related data
-    bots = db.query(WidgetBot).filter_by(owner_id=user_id).all()
+    bots    = db.query(WidgetBot).filter_by(owner_id=user_id).all()
     bot_ids = [b.id for b in bots]
 
     if bot_ids:
@@ -906,11 +966,19 @@ def delete_user(
         except Exception:
             pass
 
-        # Delete FAISS indexes
+        # Delete MongoDB document metadata for every bot
+        try:
+            from database import documents_collection
+            documents_collection.delete_many({"user_id": {"$in": bot_ids}})
+        except Exception:
+            pass
+
+        # Delete FAISS vector stores — one directory per bot (user_{bot_id})
         import shutil
-        vector_root = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}")
-        if os.path.exists(vector_root):
-            shutil.rmtree(vector_root, ignore_errors=True)
+        for bid in bot_ids:
+            vector_dir = os.path.join(os.getcwd(), "vector_store", f"user_{bid}")
+            if os.path.exists(vector_dir):
+                shutil.rmtree(vector_dir, ignore_errors=True)
 
     db.query(WidgetApiKey).filter(WidgetApiKey.bot_id.in_(bot_ids)).delete(synchronize_session=False)
     db.query(WidgetBot).filter_by(owner_id=user_id).delete(synchronize_session=False)
