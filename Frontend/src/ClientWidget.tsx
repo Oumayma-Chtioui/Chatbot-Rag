@@ -90,17 +90,18 @@ export default function ClientWidget({ bot, setBot, user }: Props) {
     ? keys.find(k => k.is_active)!.prefix + "••••••••"
     : null);
 
+  const widgetVersion = Date.now();
   const embedCode = displayKey
     ? `<script>
-    window.NovaMindConfig = {
-      apiKey:         "${newKey ?? "<your-api-key>"}",
-      apiBase:        "${apiBase}",
-      botName:        "${bot?.name || "Assistant"}",
-      accent:         "${accent}",
-      welcomeMessage: "${bot?.welcome_message || "Hi! How can I help you today?"}",
-    };
-  </script>
-  <script src="${apiBase}/static/widget.js"></script>`
+      window.NovaMindConfig = {
+        apiKey:         "${newKey ?? "<your-api-key>"}",
+        apiBase:        "${apiBase}",
+        botName:        "${bot?.name || "Assistant"}",
+        accent:         "${accent}",
+        welcomeMessage: "${bot?.welcome_message || "Hi! How can I help you today?"}",
+      };
+    </script>
+    <script src="${apiBase}/static/widget.js?v=${widgetVersion}"></script>`
     : null;
 
   return (

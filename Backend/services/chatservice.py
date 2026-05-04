@@ -561,7 +561,7 @@ def rerank(query, docs, top_n=3):
     
     return [doc for doc, _ in cross_ranked[:top_n]]
 
-async def generate_answer_stream(question: str, user_id: str, session_id: str, memory_session_id: str):
+async def generate_answer_stream(question: str, user_id: str, session_id: str, memory_session_id: str, system_prompt: str = None):
     import asyncio
     import json
     import time
@@ -653,7 +653,8 @@ async def generate_answer_stream(question: str, user_id: str, session_id: str, m
 
         context       = "\n\n".join(doc.page_content for doc in docs)
         history_block = f"\n\nConversation history:\n{relevant_history}" if relevant_history else ""
-        system_prompt =f"""You are a helpful assistant.
+        base_instructions = system_prompt or "You are a helpful assistant."
+        system_prompt =f"""{base_instructions}
 
 Rules:
 - Answer the question based ONLY on the provided context.

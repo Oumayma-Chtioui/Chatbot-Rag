@@ -508,6 +508,18 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
     except Exception:
         pass
 
+    # Batch-fetch real doc counts from MongoDB (one aggregation, not N queries)
+    from database import documents_collection
+    mongo_doc_counts: dict = {}
+    try:
+        for row in documents_collection.aggregate([
+            {"$match": {"user_id": {"$in": bot_ids_all}}},
+            {"$group": {"_id": "$user_id", "count": {"$sum": 1}}},
+        ]):
+            mongo_doc_counts[row["_id"]] = row["count"]
+    except Exception:
+        pass
+
     result = []
     for bot in bots:
         owner = db.query(UserModel).filter_by(id=bot.owner_id).first()
@@ -527,8 +539,9 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
         except Exception:
             pass
 
-        owner_name  = (getattr(owner, "name", None) or getattr(owner, "name", None) or "") if owner else ""
+        owner_name  = (getattr(owner, "name", None) or "") if owner else ""
         owner_email = owner.email if owner else ""
+        real_doc_count = mongo_doc_counts.get(bot.id, 0)
 
         result.append({
             "id":              bot.id,
@@ -545,8 +558,8 @@ def admin_bots(admin=Depends(require_admin), db: Session = Depends(get_db)):
             "message_count":   total_msgs,
             "success_rate":    success_rate,
             "avg_response_ms": avg_response_ms,
-            "docs_indexed":    bot.docs_indexed or 0,
-            "doc_count":       bot.docs_indexed or 0,
+            "docs_indexed":    real_doc_count,
+            "doc_count":       real_doc_count,
             "created_at":      bot.created_at.isoformat() if bot.created_at else None,
         })
 
@@ -801,6 +814,19 @@ def get_users(admin=Depends(require_admin), db: Session = Depends(get_db)):
         session_count = db.query(func.count(ChatSessionModel.id)).filter_by(user_id=u.id).scalar() or 0
         display_name  = getattr(u, "name", None) or ""
 
+        # Fetch real doc counts for this user's bots from MongoDB
+        from database import documents_collection as docs_col
+        bot_doc_counts: dict = {}
+        user_bot_ids = [b.id for b in user_bots]
+        try:
+            for row in docs_col.aggregate([
+                {"$match": {"user_id": {"$in": user_bot_ids}}},
+                {"$group": {"_id": "$user_id", "count": {"$sum": 1}}},
+            ]):
+                bot_doc_counts[row["_id"]] = row["count"]
+        except Exception:
+            pass
+
         result.append({
             "id":            u.id,
             "name":          display_name,
@@ -809,12 +835,11 @@ def get_users(admin=Depends(require_admin), db: Session = Depends(get_db)):
             "is_verified":   u.is_verified,
             "created_at":    u.created_at.isoformat() if u.created_at else None,
             "session_count": session_count,
-            # Full list of bots — AdminUsers2.tsx iterates over this
             "bots": [
                 {
                     "id":            b.id,
                     "name":          b.name,
-                    "doc_count":     b.docs_indexed or 0,
+                    "doc_count":     bot_doc_counts.get(b.id, 0),
                     "message_count": mongo_msg_counts.get(b.id, 0),
                     "accent_color":  getattr(b, "accent_color", "#7F77DD") or "#7F77DD",
                 }

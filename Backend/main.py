@@ -49,8 +49,23 @@ app.include_router(widgets_router)
 app.include_router(widget_chat_router)
 
 # Static files (serves widget.js)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+from fastapi.responses import FileResponse
+import os as _os
 
+@app.get("/static/{filename}")
+async def serve_static(filename: str):
+    file_path = _os.path.join("static", filename)
+    if not _os.path.exists(file_path):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        file_path,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
 
 from routers.human_intervention import router as intervention_router
 app.include_router(intervention_router, tags=["Intervention"])

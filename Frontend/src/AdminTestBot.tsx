@@ -117,10 +117,13 @@ export default function AdminTestBot({ bots, selectedBot, onBotSelect, loading }
           </div>
 
           <div style={{ marginTop: 20 }}>
-            <iframe
-              src={`/widget-preview?botId=${encodeURIComponent(selectedBot)}&apiKey=${encodeURIComponent(previewKey)}&apiBase=${encodeURIComponent(apiBase)}&botName=${encodeURIComponent(selectedBotDetails?.name || "Assistant")}`}
-              style={{ width: "100%", height: 700, border: "1px solid var(--border)", borderRadius: 12 }}
-              title="Test bot preview"
+            <iframe style={{
+                width: "100%",        // full width of container
+                height: "700px",      // 🔥 increase this (try 500–700px)
+                border: "none",
+                borderRadius: "12px"
+              }}
+              src={`/widget-preview?botId=${encodeURIComponent(selectedBot)}&apiKey=${encodeURIComponent(previewKey)}&apiBase=${encodeURIComponent(apiBase)}&botName=${encodeURIComponent(selectedBotDetails?.name || "Assistant")}&accent=${encodeURIComponent(selectedBotDetails?.accent_color || "#7F77DD")}&welcomeMessage=${encodeURIComponent(selectedBotDetails?.welcome_message || "Hi! How can I help you today?")}`}              title="Test bot preview"
             />
           </div>
 

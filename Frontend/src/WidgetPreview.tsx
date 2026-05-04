@@ -6,6 +6,8 @@ export default function WidgetPreview() {
   const apiKey = query.get("apiKey") || "";
   const apiBase = query.get("apiBase") || "http://localhost:8000";
   const botName = query.get("botName") || "Assistant";
+  const welcomeMessage = query.get("welcomeMessage") || "Hi! How can I help you today?";
+  const accent = query.get("accent") || "#7F77DD";
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,10 +22,12 @@ export default function WidgetPreview() {
       apiKey,
       apiBase,
       botName,
+      welcomeMessage,
+      accent,
     };
 
     const script = document.createElement("script");
-    script.src = `${apiBase}/static/widget.js`;
+    script.src = `${apiBase}/static/widget.js?v=` + Date.now();
     script.async = true;
     script.onload = () => setReady(true);
     script.onerror = () => setError("Unable to load widget script.");

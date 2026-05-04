@@ -337,7 +337,7 @@ export default function ClientApp() {
         {activeBot && page === "feedback" && (
           <ClientFeedback bot={activeBot} />
         )}
-        {page === "tickets" && <ClientTickets />}
+        {activeBot && page === "tickets" && <ClientTickets bot={activeBot} />}
       </main>
     </div>
   );

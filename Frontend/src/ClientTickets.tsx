@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { getTickets, respondToTicket, deleteTicket } from "./api";
+import { Bot } from "./ClientApp";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -21,8 +22,9 @@ interface Ticket {
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
 
-const STATUS_META = {
-  
+const STATUS_META: Record<string, {
+  label: string; short: string; color: string; bg: string; dot: string;
+}> = {
   pending_response: {
     label: "Response required",
     short: "Needs reply",
@@ -30,6 +32,9 @@ const STATUS_META = {
     bg:    "rgba(216,90,48,0.12)",
     dot:   "#D85A30",
   },
+  // common aliases the backend might send
+  open:    { label: "Open",    short: "Open",    color: "var(--danger)",  bg: "rgba(216,90,48,0.12)",   dot: "#D85A30" },
+  pending: { label: "Pending", short: "Pending", color: "var(--danger)",  bg: "rgba(216,90,48,0.12)",   dot: "#D85A30" },
   answered: {
     label: "Answered",
     short: "Answered",
@@ -37,7 +42,11 @@ const STATUS_META = {
     bg:    "rgba(29,158,117,0.12)",
     dot:   "#1D9E75",
   },
-} as const;
+  closed:   { label: "Closed",   short: "Closed",   color: "var(--success)", bg: "rgba(29,158,117,0.12)",  dot: "#1D9E75" },
+  resolved: { label: "Resolved", short: "Resolved", color: "var(--success)", bg: "rgba(29,158,117,0.12)",  dot: "#1D9E75" },
+  // catch-all for anything unexpected
+  _unknown: { label: "Unknown",  short: "Unknown",  color: "var(--text3)",   bg: "var(--bg3)",             dot: "#888" },
+};
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", {
@@ -51,8 +60,8 @@ const initials = (email: string) => email.slice(0, 2).toUpperCase();
 
 /* ─── sub-components ──────────────────────────────────────────────────────── */
 
-const StatusBadge: React.FC<{ status: Ticket["status"] }> = ({ status }) => {
-  const m = STATUS_META[status];
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const m = STATUS_META[status] ?? STATUS_META["_unknown"];
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 5,
@@ -199,7 +208,9 @@ const ChatHistoryPanel: React.FC<{ history: ChatMessage[] }> = ({ history }) => 
 
 /* ─── main component ──────────────────────────────────────────────────────── */
 
-const ClientTickets: React.FC = () => {
+interface Props { bot: Bot; }
+
+const ClientTickets: React.FC<Props> = ({ bot }) => {
   const [tickets,    setTickets]    = useState<Ticket[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [selected,   setSelected]   = useState<Ticket | null>(null);
@@ -207,19 +218,26 @@ const ClientTickets: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [sent,       setSent]       = useState(false);
   const [filter,     setFilter]     = useState<Ticket["status"] | "all">("all");
+  const [loadError,  setLoadError]  = useState<string | null>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
 
   /* load */
   const load = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const { tickets } = await getTickets();
-      setTickets(tickets);
+      const data = await getTickets(bot.id);
+      // API may return { tickets: [...] } or a bare array
+      const list = Array.isArray(data) ? data : (data?.tickets ?? []);
+      setTickets(list);
+    } catch (err: any) {
+      setLoadError(err?.message || "Failed to load tickets. Check your connection and try again.");
+      setTickets([]);
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [bot.id]);
 
   /* auto-focus textarea when ticket selected */
   useEffect(() => {
@@ -235,7 +253,7 @@ const ClientTickets: React.FC = () => {
     if (!selected || !answer.trim()) return;
     setSubmitting(true);
     try {
-      await respondToTicket(selected.ticket_id, answer);
+      await respondToTicket(bot.id, selected.ticket_id, answer);
       setSent(true);
       setAnswer("");
       await load();
@@ -253,7 +271,7 @@ const ClientTickets: React.FC = () => {
       return;
     }
     try {
-      await deleteTicket(ticket.ticket_id);
+      await deleteTicket(bot.id, ticket.ticket_id);
       await load();
       if (selected?.ticket_id === ticket.ticket_id) setSelected(null);
     } catch (err: any) {
@@ -266,11 +284,14 @@ const ClientTickets: React.FC = () => {
     ? tickets
     : tickets.filter(t => t.status === filter);
 
+  const NEEDS_REPLY = new Set(["pending_response", "open", "pending"]);
+  const IS_ANSWERED = new Set(["answered", "closed", "resolved"]);
+
   /* counts */
   const counts = {
-    all:                  tickets.length,
-    pending_response:     tickets.filter(t => t.status === "pending_response").length,
-    answered:             tickets.filter(t => t.status === "answered").length,
+    all:              tickets.length,
+    pending_response: tickets.filter(t => NEEDS_REPLY.has(t.status)).length,
+    answered:         tickets.filter(t => IS_ANSWERED.has(t.status)).length,
   };
 
   /* ── render ── */
@@ -392,6 +413,21 @@ const ClientTickets: React.FC = () => {
             {loading ? (
               <div style={{ padding: 32, color: "var(--text3)", fontSize: 13, textAlign: "center" }}>
                 Loading tickets…
+              </div>
+            ) : loadError ? (
+              <div style={{ padding: 32, textAlign: "center" }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
+                <div style={{ fontSize: 13, color: "var(--danger)", marginBottom: 12 }}>{loadError}</div>
+                <button
+                  onClick={load}
+                  style={{
+                    background: "var(--bg2)", border: "1px solid var(--border)",
+                    borderRadius: 8, color: "var(--text2)", fontSize: 12,
+                    padding: "6px 14px", cursor: "pointer",
+                  }}
+                >
+                  Retry
+                </button>
               </div>
             ) : visible.length === 0 ? (
               <div style={{ padding: 32, color: "var(--text3)", fontSize: 13, textAlign: "center" }}>

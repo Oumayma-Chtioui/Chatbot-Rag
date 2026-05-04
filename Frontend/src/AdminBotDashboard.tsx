@@ -127,181 +127,98 @@ function StatusDot({ active }: { active: boolean }) {
 
 // ── Settings panel (admin can view + update bot config) ───────────────────────
 
-function SettingsPanel({ bot, onUpdated }: { bot: any; onUpdated: (updated: any) => void }) {
-  const [name,          setName]          = useState(bot.name || "");
-  const [accentColor,   setAccentColor]   = useState(bot.accent_color || "#7F77DD");
-  const [welcomeMsg,    setWelcomeMsg]    = useState(bot.welcome_message || "Hi! How can I help you today?");
-  const [systemPrompt,  setSystemPrompt]  = useState(bot.system_prompt || "You are a helpful assistant.");
-  const [allowedOrigin, setAllowedOrigin] = useState(bot.allowed_origin || "");
-  const [saving,        setSaving]        = useState(false);
-  const [saved,         setSaved]         = useState(false);
-  const [error,         setError]         = useState<string | null>(null);
+function ReadOnlyRow({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+        {label}
+      </label>
+      <div style={{
+        padding: "10px 12px",
+        background: "var(--bg3)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        fontSize: 13,
+        color: "var(--text2)",
+        lineHeight: 1.5,
+        whiteSpace: multiline ? "pre-wrap" as const : "nowrap" as const,
+        overflow: "hidden",
+        textOverflow: multiline ? "unset" : "ellipsis",
+        userSelect: "text" as const,
+      }}>
+        {value}
+      </div>
+    </div>
+  );
+}
 
-  const adminToken = () => localStorage.getItem("admin_token");
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      // Admin uses the same PATCH /widgets/bots/{id} endpoint
-      // but must impersonate via the owner's token — not available to admin directly.
-      // Instead we call a direct DB update via admin endpoint if available,
-      // or we show a read-only note. For now we call the standard patch endpoint
-      // with the admin token (works if your backend allows admin to patch any bot).
-      const res = await fetch(`http://localhost:8000/widgets/bots/${bot.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken()}`,
-        },
-        body: JSON.stringify({
-          name:            name.trim(),
-          accent_color:    accentColor,
-          welcome_message: welcomeMsg.trim(),
-          system_prompt:   systemPrompt.trim(),
-          allowed_origin:  allowedOrigin.trim() || null,
-        }),
-      });
-      if (!res.ok) {
-        const e = await res.json();
-        throw new Error(e.detail || "Update failed");
-      }
-      const updated = await res.json();
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-      onUpdated({ ...bot, ...updated, accent_color: accentColor, welcome_message: welcomeMsg });
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+function SettingsPanel({ bot }: { bot: any }) {
+  const accent = bot.accent_color || "#7F77DD";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-      {/* Bot name */}
-      <SettingRow label="Bot name" hint="Display name shown in widget header.">
-        <input
-          className="cl-input"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="My Bot"
-          disabled={saving}
-        />
-      </SettingRow>
+      {/* Read-only warning */}
+      <div style={{
+        padding: "10px 14px",
+        background: "rgba(186,117,23,0.08)",
+        border: "1px solid rgba(186,117,23,0.2)",
+        borderRadius: 8,
+        fontSize: 12,
+        color: "#BA7517",
+      }}>
+        ⚠ Admin view — settings are read-only. The bot owner can edit these from their client portal.
+      </div>
 
-      {/* Welcome message */}
-      <SettingRow label="Welcome message" hint="First message users see when the widget opens.">
-        <textarea
-          className="cl-input"
-          rows={3}
-          value={welcomeMsg}
-          onChange={e => setWelcomeMsg(e.target.value)}
-          placeholder="Hi! How can I help you today?"
-          disabled={saving}
-          style={{ resize: "vertical" }}
-        />
-      </SettingRow>
+      <ReadOnlyRow label="Bot name" value={bot.name || "—"} />
+      <ReadOnlyRow label="Welcome message" value={bot.welcome_message || "Hi! How can I help you today?"} multiline />
+      <ReadOnlyRow label="System prompt" value={bot.system_prompt || "You are a helpful assistant."} multiline />
+      <ReadOnlyRow label="Allowed origin" value={bot.allowed_origin || "Any origin (unrestricted)"} />
 
-      {/* System prompt */}
-      <SettingRow label="System prompt" hint="Instructions that shape how the bot behaves.">
-        <textarea
-          className="cl-input"
-          rows={5}
-          value={systemPrompt}
-          onChange={e => setSystemPrompt(e.target.value)}
-          disabled={saving}
-          style={{ resize: "vertical" }}
-        />
-      </SettingRow>
-
-      {/* Allowed origin */}
-      <SettingRow label="Allowed origin" hint="Leave empty to allow all origins.">
-        <input
-          className="cl-input"
-          value={allowedOrigin}
-          onChange={e => setAllowedOrigin(e.target.value)}
-          placeholder="https://example.com"
-          disabled={saving}
-        />
-      </SettingRow>
-
-      {/* Accent color */}
-      <SettingRow label="Accent color" hint="Widget header and button color.">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {PRESET_COLORS.map(c => (
-            <button
-              key={c}
-              onClick={() => setAccentColor(c)}
-              style={{
-                width: 28, height: 28, borderRadius: 6,
-                background: c, border: "none", cursor: "pointer",
-                boxShadow: accentColor === c ? `0 0 0 2px var(--bg2), 0 0 0 4px ${c}` : "none",
-                transform: accentColor === c ? "scale(1.15)" : "scale(1)",
-                transition: "transform 0.15s",
-              }}
-            />
-          ))}
-          <label style={{
-            width: 28, height: 28, borderRadius: 6,
-            border: "2px dashed var(--border2)", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 14, color: "var(--text3)", position: "relative", overflow: "hidden",
+      {/* Accent color — display only */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", textTransform: "uppercase" as const, letterSpacing: "0.05em" }}>
+          Accent color
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            background: accent,
+            border: "1px solid rgba(0,0,0,0.15)",
+            flexShrink: 0,
+          }} />
+          <span style={{
+            fontFamily: "monospace", fontSize: 12,
+            color: "var(--text2)", padding: "3px 8px",
+            background: "var(--bg3)", borderRadius: 5,
+            border: "1px solid var(--border)",
           }}>
-            <input
-              type="color"
-              value={accentColor}
-              onChange={e => setAccentColor(e.target.value)}
-              style={{ position: "absolute", opacity: 0, width: "100%", height: "100%", cursor: "pointer" }}
-            />
-            +
-          </label>
-          <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text2)", padding: "3px 8px", background: "var(--bg3)", borderRadius: 5, border: "1px solid var(--border)" }}>
-            {accentColor}
+            {accent}
           </span>
         </div>
-      </SettingRow>
+      </div>
 
-      {/* Live preview */}
+      {/* Preview */}
       <SettingRow label="Preview">
         <div style={{
-          background: accentColor,
+          background: accent,
           borderRadius: 10, padding: "10px 16px",
           display: "flex", alignItems: "center", justifyContent: "space-between",
           color: "#fff", fontSize: 13, fontWeight: 600,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>◉</div>
-            {name || "Bot name"}
+            {bot.name || "Bot name"}
           </div>
           <span style={{ opacity: 0.7, fontSize: 16 }}>✕</span>
         </div>
         <div style={{ background: "var(--bg3)", borderRadius: "0 0 10px 10px", padding: "10px 14px", border: "1px solid var(--border)", borderTop: "none" }}>
           <div style={{ fontSize: 12, color: "var(--text2)", fontStyle: "italic" }}>
-            💬 {welcomeMsg || "Welcome message preview"}
+            💬 {bot.welcome_message || "Hi! How can I help you today?"}
           </div>
         </div>
       </SettingRow>
 
-      {error && <div className="cl-error">{error}</div>}
-
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <button
-          className="cl-btn-primary"
-          onClick={handleSave}
-          disabled={saving}
-          style={{ padding: "9px 24px" }}
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-        {saved && (
-          <span style={{ fontSize: 12, color: "#1D9E75", display: "flex", alignItems: "center", gap: 4 }}>
-            ✓ Saved
-          </span>
-        )}
-      </div>
     </div>
   );
 }
@@ -677,7 +594,7 @@ export default function AdminBotDashboard({ bot: initialBot, onBack }: Props) {
       {/* ════ SETTINGS ════ */}
       {!loading && tab === "settings" && (
         <div style={{ maxWidth: 680 }}>
-          <SettingsPanel bot={bot} onUpdated={(updated) => setBot(updated)} />
+          <SettingsPanel bot={bot} />
         </div>
       )}
 

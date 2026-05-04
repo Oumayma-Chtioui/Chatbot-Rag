@@ -512,16 +512,16 @@ export async function getAdvancedAnalytics(botId: string): Promise<any> {
   return await res.json();
 }
 
-export async function getTickets(): Promise<any> {
-  const res = await fetch(`${API_BASE}/widgets/tickets`, {
+export async function getTickets(botId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/bots/${botId}/tickets`, {
     headers: getClientHeaders(),
   });
   if (!res.ok) throw new Error("Failed to fetch tickets");
   return await res.json();
 }
 
-export async function respondToTicket(ticketId: string, answer: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/widgets/tickets/${ticketId}/respond`, {
+export async function respondToTicket(botId: string, ticketId: string, answer: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/bots/${botId}/tickets/${ticketId}/respond`, {
     method: "POST",
     headers: getClientHeaders(),
     body: JSON.stringify({ answer }),
@@ -530,8 +530,8 @@ export async function respondToTicket(ticketId: string, answer: string): Promise
   return await res.json();
 }
 
-export async function deleteTicket(ticketId: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/widgets/tickets/${ticketId}`, {
+export async function deleteTicket(botId: string, ticketId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/widgets/bots/${botId}/tickets/${ticketId}`, {
     method: "DELETE",
     headers: getClientHeaders(),
   });

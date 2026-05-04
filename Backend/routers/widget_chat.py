@@ -102,6 +102,7 @@ async def widget_chat(
             user_id=bot.id,
             session_id=doc_session_id,
             memory_session_id=chat_session_id,
+            system_prompt=bot.system_prompt,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -167,6 +168,7 @@ async def widget_chat_stream(
                 user_id=bot.id,
                 session_id=doc_session_id,
                 memory_session_id=chat_session_id,
+                system_prompt=bot.system_prompt,
             ):
                 if chunk.startswith("__SOURCES__:"):
                     try:

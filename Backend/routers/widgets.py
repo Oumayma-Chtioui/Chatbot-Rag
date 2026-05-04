@@ -755,6 +755,88 @@ async def get_advanced_analytics(
         logger.error("Advanced analytics error: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Analytics error: {str(e)}")
 
+
+class TicketRespondRequest(BaseModel):
+    answer: str
+
+
+@router.get("/bots/{bot_id}/tickets")
+def list_bot_tickets(
+    bot_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    tickets_col = mongodb["intervention_tickets"]
+    raw = list(tickets_col.find({"bot_id": bot_id}, {"_id": 0}).sort("created_at", -1))
+
+    tickets = []
+    for t in raw:
+        tickets.append({
+            "ticket_id":    t.get("ticket_id") or t.get("id", ""),
+            "question":     t.get("question", ""),
+            "user_email":   t.get("user_email", ""),
+            "status":       t.get("status", "pending_response"),
+            "created_at":   _safe_date_str(t.get("created_at")),
+            "answered_at":  _safe_date_str(t.get("answered_at")) or None,
+            "answer":       t.get("answer") or None,
+            "bot_name":     bot.name,
+            "chat_history": t.get("chat_history", []),
+        })
+
+    return {"tickets": tickets, "total": len(tickets)}
+
+
+@router.post("/bots/{bot_id}/tickets/{ticket_id}/respond")
+def respond_to_bot_ticket(
+    bot_id: str,
+    ticket_id: str,
+    req: TicketRespondRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    tickets_col = mongodb["intervention_tickets"]
+    result = tickets_col.update_one(
+        {"bot_id": bot_id, "$or": [{"ticket_id": ticket_id}, {"id": ticket_id}]},
+        {"$set": {
+            "answer":      req.answer,
+            "status":      "answered",
+            "answered_at": datetime.utcnow().isoformat(),
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    return {"ok": True, "ticket_id": ticket_id}
+
+
+@router.delete("/bots/{bot_id}/tickets/{ticket_id}")
+def delete_bot_ticket(
+    bot_id: str,
+    ticket_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bot = db.query(WidgetBot).filter_by(id=bot_id, owner_id=current_user.id).first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    tickets_col = mongodb["intervention_tickets"]
+    result = tickets_col.delete_one(
+        {"bot_id": bot_id, "$or": [{"ticket_id": ticket_id}, {"id": ticket_id}]},
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    return {"ok": True, "deleted": ticket_id}
+
 import os
 import shutil
  
