@@ -246,52 +246,56 @@ def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
 
     # ── Top 5 clients (by messages) ─────────────────────────────────────────────
 
-    # 1. Map bot_id → owner_id
-    bots = db.query(WidgetBot.id, WidgetBot.owner_id).all()
+    # 1. Fetch all bots with full detail (id, owner_id, name, accent_color)
+    bots = db.query(WidgetBot).all()
     bot_owner_map = {b.id: b.owner_id for b in bots}
 
     # 2. Aggregate messages per bot (last 30 days)
-    user_msg_counts = {}
+    bot_msg_counts_map: dict = {}
+    user_msg_counts: dict = {}
 
     try:
         pipeline = [
             {"$match": {"created_at": {"$gte": m_ago}}},
             {"$group": {"_id": "$bot_id", "count": {"$sum": 1}}},
         ]
-
-        bot_msg_counts = list(messages_col.aggregate(pipeline))
-
-        # 3. Convert bot counts → user counts
-        for row in bot_msg_counts:
-            bot_id = row["_id"]
-            count  = row["count"]
-
-            owner_id = bot_owner_map.get(bot_id)
+        for row in messages_col.aggregate(pipeline):
+            bid   = row["_id"]
+            count = row["count"]
+            bot_msg_counts_map[bid] = count
+            owner_id = bot_owner_map.get(bid)
             if owner_id:
                 user_msg_counts[owner_id] = user_msg_counts.get(owner_id, 0) + count
-
     except Exception:
-        user_msg_counts = {}
+        pass
+
+    # 3. Aggregate doc counts per bot from MongoDB
+    bot_doc_counts_map: dict = {}
+    try:
+        from database import documents_collection as docs_col
+        for row in docs_col.aggregate([
+            {"$group": {"_id": "$user_id", "count": {"$sum": 1}}},
+        ]):
+            bot_doc_counts_map[row["_id"]] = row["count"]
+    except Exception:
+        pass
 
     # 4. Build top clients list
     top_clients = []
-
-    all_users = db.query(UserModel).all()
+    all_users   = db.query(UserModel).all()
 
     for u in all_users:
         msgs_used = user_msg_counts.get(u.id, 0)
 
-        # Get subscription (if exists)
-        sub = db.query(Subscription).filter_by(owner_id=u.id, status="active").first()
-        plan = sub.plan.lower() if sub else "free"
-
+        sub    = db.query(Subscription).filter_by(owner_id=u.id, status="active").first()
+        plan   = sub.plan.lower() if sub else "free"
         quotas = PLAN_QUOTAS.get(plan, PLAN_QUOTAS["free"])
 
-        # Optional: storage (safe fallback)
+        # Storage (safe fallback)
         storage_gb = 0.0
+        user_bots  = [b for b in bots if b.owner_id == u.id]
         try:
-            user_bots = [b.id for b in bots if b.owner_id == u.id]
-            indexes = get_all_indexes(user_bots)
+            indexes    = get_all_indexes([b.id for b in user_bots])
             storage_gb = sum(idx.get("size_mb", 0) for idx in indexes) / 1024
         except Exception:
             pass
@@ -300,6 +304,20 @@ def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
             (msgs_used / quotas["messages"] * 100) if quotas["messages"] else 0,
             (storage_gb / quotas["storage_gb"] * 100) if quotas["storage_gb"] else 0,
         )
+
+        # Per-bot breakdown — shown in the expandable bots list on the frontend
+        bots_detail = [
+            {
+                "id":            b.id,
+                "name":          b.name,
+                "message_count": bot_msg_counts_map.get(b.id, 0),
+                "doc_count":     bot_doc_counts_map.get(b.id, 0),
+                "accent_color":  getattr(b, "accent_color", None) or "#7F77DD",
+            }
+            for b in user_bots
+        ]
+        # Sort bots by message count descending so the busiest bot comes first
+        bots_detail.sort(key=lambda x: -x["message_count"])
 
         top_clients.append({
             "id":               u.id,
@@ -312,6 +330,7 @@ def admin_overview(admin=Depends(require_admin), db: Session = Depends(get_db)):
             "storage_quota_gb": quotas["storage_gb"],
             "mrr":              PLAN_MRR.get(plan, 0),
             "usage_pct":        round(usage_pct, 1),
+            "bots":             bots_detail,          # ← NEW: full per-bot breakdown
         })
 
     # 5. Sort & keep top 5

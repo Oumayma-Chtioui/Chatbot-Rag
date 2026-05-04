@@ -233,9 +233,60 @@ const ResponseSparkline: React.FC<{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Top clients table — sorted by message count
+// Top clients table — sorted by message count, supports multiple bots per client
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Normalise a TopClient so it always has a `bots` array.
+// Supports three backend shapes:
+//   1. New:  { bots: BotSummary[] }
+//   2. Old:  { bot: BotSummary | null }
+//   3. None: neither field present (legacy flat record)
+interface BotSummary {
+  id: string;
+  name: string;
+  message_count?: number;   // preferred name
+  messages?: number;        // alternate name some backends use
+  doc_count?: number;
+  docs_indexed?: number;
+  accent_color?: string;
+}
+
+function normaliseBots(c: TopClient): BotSummary[] {
+  if (Array.isArray((c as any).bots) && (c as any).bots.length > 0) {
+    return (c as any).bots as BotSummary[];
+  }
+  if ((c as any).bot) {
+    return [(c as any).bot as BotSummary];
+  }
+  return [];
+}
+
+const BotPill: React.FC<{ bot: BotSummary }> = ({ bot }) => {
+  const accent = bot.accent_color || C.purple;
+  const msgs   = bot.message_count ?? bot.messages ?? 0;
+  const docs   = bot.doc_count     ?? bot.docs_indexed ?? 0;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 7,
+      padding: "5px 10px",
+      background: `${accent}10`,
+      border: `1px solid ${accent}30`,
+      borderLeft: `3px solid ${accent}`,
+      borderRadius: 7,
+    }}>
+      <div style={{ width: 7, height: 7, borderRadius: 2, background: accent, flexShrink: 0 }} />
+      <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {bot.name}
+      </span>
+      <span style={{ fontSize: 10, color: "var(--text3)", whiteSpace: "nowrap" }}>
+        {fmt(msgs)} msgs · {fmt(docs)} docs
+      </span>
+    </div>
+  );
+};
+
 const TopClientsTable: React.FC<{ clients: TopClient[] }> = ({ clients }) => {
+  const [expanded, setExpanded] = useState<Set<string | number>>(new Set());
   const all = clients ?? [];
 
   if (all.length === 0) {
@@ -250,199 +301,163 @@ const TopClientsTable: React.FC<{ clients: TopClient[] }> = ({ clients }) => {
   const top5 = sorted.slice(0, 5);
 
   // Total messages (ALL users, not just top 5)
-  const totalMsgs = all.reduce(
-    (sum, c) => sum + (c.messages_used ?? 0),
-    0
-  );
-
-  // Sum of top 5
-  const top5Total = top5.reduce(
-    (sum, c) => sum + (c.messages_used ?? 0),
-    0
-  );
-
+  const totalMsgs = all.reduce((sum, c) => sum + (c.messages_used ?? 0), 0);
+  const top5Total = top5.reduce((sum, c) => sum + (c.messages_used ?? 0), 0);
   const othersMsgs = totalMsgs - top5Total;
 
   const getPct = (val: number) =>
     totalMsgs > 0 ? Math.round((val / totalMsgs) * 100) : 0;
 
+  const toggleExpand = (id: string | number) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div>
       {/* Header */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "22px 1fr 80px 1fr 80px",
-          gap: 12,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        {["#", "Client", "Plan", "Messages", "Storage"].map((h) => (
-          <span
-            key={h}
-            style={{
-              fontSize: 10,
-              color: "var(--text3)",
-              fontWeight: 600,
-              textTransform: "uppercase",
-            }}
-          >
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "22px 1fr 80px 1fr 70px 60px",
+        gap: 12,
+        paddingBottom: 8,
+        borderBottom: "1px solid var(--border)",
+      }}>
+        {["#", "Client", "Plan", "Messages", "Storage", "Bots"].map((h) => (
+          <span key={h} style={{ fontSize: 10, color: "var(--text3)", fontWeight: 600, textTransform: "uppercase" }}>
             {h}
           </span>
         ))}
       </div>
 
-      {/* Top 5 */}
+      {/* Top 5 rows */}
       {top5.map((c, i) => {
-        const badge =
-          PLAN_BADGE[c.plan?.toLowerCase()] ?? PLAN_BADGE.free;
-
-        const pct = getPct(c.messages_used ?? 0);
-
-        const barColor =
-          pct >= 40 ? C.red : pct >= 20 ? C.amber : C.purple;
+        const badge    = PLAN_BADGE[c.plan?.toLowerCase()] ?? PLAN_BADGE.free;
+        const pct      = getPct(c.messages_used ?? 0);
+        const barColor = pct >= 40 ? C.red : pct >= 20 ? C.amber : C.purple;
+        const bots     = normaliseBots(c);
+        const rowId    = c.id ?? i;
+        const isOpen   = expanded.has(rowId);
 
         return (
-          <div
-            key={c.id ?? i}
-            style={{
+          <React.Fragment key={rowId}>
+            <div style={{
               display: "grid",
-              gridTemplateColumns: "22px 1fr 80px 1fr 80px",
+              gridTemplateColumns: "22px 1fr 80px 1fr 70px 60px",
               alignItems: "center",
               gap: 12,
               padding: "10px 0",
-              borderBottom:
-                i < top5.length - 1 ? "1px solid var(--border)" : "none",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 11,
-                color: "var(--text3)",
-                fontWeight: 600,
-              }}
-            >
-              #{i + 1}
-            </span>
+              borderBottom: "1px solid var(--border)",
+            }}>
+              {/* Rank */}
+              <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600 }}>#{i + 1}</span>
 
-            <div>
-              <p style={{ margin: 0, fontSize: 13 }}>
-                {c.name || c.email?.split("@")[0] || "—"}
-              </p>
-              <p style={{ margin: 0, fontSize: 11, color: "var(--text2)" }}>
-                {c.email}
-              </p>
-            </div>
-
-            <span
-              style={{
-                padding: "3px 9px",
-                borderRadius: 20,
-                fontSize: 11,
-                background: badge.bg,
-                color: badge.color,
-                textTransform: "capitalize",
-              }}
-            >
-              {c.plan ?? "free"}
-            </span>
-
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 10,
-                  marginBottom: 4,
-                }}
-              >
-                <span>{fmt(c.messages_used ?? 0)} msgs</span>
-                <span style={{ fontWeight: 700 }}>{pct}%</span>
+              {/* Client info */}
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
+                  {c.name || c.email?.split("@")[0] || "—"}
+                </p>
+                <p style={{ margin: 0, fontSize: 11, color: "var(--text2)" }}>{c.email}</p>
               </div>
 
-              <div
-                style={{
-                  height: 4,
-                  background: "rgba(128,128,128,0.12)",
-                  borderRadius: 2,
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${pct}%`,
-                    background: barColor,
-                    borderRadius: 2,
-                  }}
-                />
+              {/* Plan badge */}
+              <span style={{
+                padding: "3px 9px", borderRadius: 20, fontSize: 11,
+                background: badge.bg, color: badge.color, textTransform: "capitalize",
+              }}>
+                {c.plan ?? "free"}
+              </span>
+
+              {/* Messages bar */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 4 }}>
+                  <span>{fmt(c.messages_used ?? 0)} msgs</span>
+                  <span style={{ fontWeight: 700 }}>{pct}%</span>
+                </div>
+                <div style={{ height: 4, background: "rgba(128,128,128,0.12)", borderRadius: 2 }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 2 }} />
+                </div>
+              </div>
+
+              {/* Storage */}
+              <div>
+                <p style={{ margin: 0, fontSize: 12 }}>{(c.storage_used_gb ?? 0).toFixed(1)} GB</p>
+                <p style={{ margin: 0, fontSize: 10, color: "var(--text3)" }}>/ {c.storage_quota_gb ?? "—"} GB</p>
+              </div>
+
+              {/* Bot count — click to expand */}
+              <div>
+                {bots.length === 0 ? (
+                  <span style={{ fontSize: 11, color: "var(--text3)" }}>—</span>
+                ) : (
+                  <button
+                    onClick={() => toggleExpand(rowId)}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      background: isOpen ? "rgba(127,119,221,0.15)" : "rgba(127,119,221,0.08)",
+                      border: "1px solid rgba(127,119,221,0.25)",
+                      borderRadius: 6, color: C.purple,
+                      padding: "3px 9px", cursor: "pointer",
+                      fontSize: 11, fontWeight: 600,
+                    }}
+                  >
+                    {bots.length}
+                    <span style={{
+                      fontSize: 8,
+                      display: "inline-block",
+                      transition: "transform 0.15s",
+                      transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    }}>▼</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            <div>
-              <p style={{ margin: 0, fontSize: 12 }}>
-                {(c.storage_used_gb ?? 0).toFixed(1)} GB
-              </p>
-              <p style={{ margin: 0, fontSize: 10, color: "var(--text3)" }}>
-                / {c.storage_quota_gb ?? "—"} GB
-              </p>
-            </div>
-          </div>
+            {/* Expanded bots list */}
+            {isOpen && bots.length > 0 && (
+              <div style={{
+                paddingLeft: 34,
+                paddingBottom: 10,
+                borderBottom: "1px solid var(--border)",
+                display: "flex", flexDirection: "column", gap: 5,
+              }}>
+                <p style={{ margin: "6px 0 4px", fontSize: 10, color: "var(--text3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  Bots ({bots.length})
+                </p>
+                {bots.map(bot => <BotPill key={bot.id} bot={bot} />)}
+              </div>
+            )}
+          </React.Fragment>
         );
       })}
 
       {/* Others row */}
       {othersMsgs > 0 && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "22px 1fr 80px 1fr 80px",
-            alignItems: "center",
-            gap: 12,
-            padding: "10px 0",
-          }}
-        >
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "22px 1fr 80px 1fr 70px 60px",
+          alignItems: "center",
+          gap: 12,
+          padding: "10px 0",
+        }}>
           <span style={{ fontSize: 11, color: "var(--text3)" }}>+</span>
-
           <div>
             <p style={{ margin: 0, fontSize: 13 }}>Other users</p>
           </div>
-
           <span style={{ fontSize: 11, color: "var(--text3)" }}>—</span>
-
           <div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 10,
-                marginBottom: 4,
-              }}
-            >
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 4 }}>
               <span>{fmt(othersMsgs)} msgs</span>
-              <span style={{ fontWeight: 700 }}>
-                {getPct(othersMsgs)}%
-              </span>
+              <span style={{ fontWeight: 700 }}>{getPct(othersMsgs)}%</span>
             </div>
-
-            <div
-              style={{
-                height: 4,
-                background: "rgba(128,128,128,0.12)",
-                borderRadius: 2,
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  width: `${getPct(othersMsgs)}%`,
-                  background: C.grey,
-                  borderRadius: 2,
-                }}
-              />
+            <div style={{ height: 4, background: "rgba(128,128,128,0.12)", borderRadius: 2 }}>
+              <div style={{ height: "100%", width: `${getPct(othersMsgs)}%`, background: C.grey, borderRadius: 2 }} />
             </div>
           </div>
-
+          <div />
           <div />
         </div>
       )}
