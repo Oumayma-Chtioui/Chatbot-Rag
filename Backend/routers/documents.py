@@ -44,8 +44,6 @@ def get_documents(session_id: Optional[str] = None,current_user: UserModel = Dep
     }
 
 
-from tasks.ingest_tasks import ingest_document_task
-
 @router.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -86,22 +84,30 @@ async def upload_document(
     }
     documents_collection.insert_one(doc_record)
 
-    # Dispatch to Celery — does NOT block
-    task = ingest_document_task.delay(
-        file_path=temp_path,
-        filename=file.filename,
-        user_id=current_user.id,
-        session_id=session_id,
-        max_pages=0,
-        doc_id=doc_id,
-    )
+    # Run ingestion synchronously
+    class FakeFile:
+        def __init__(self, name): self.filename = name
+
+    try:
+        result = await load_document(FakeFile(file.filename), temp_path, current_user.id, session_id, 0, doc_id)
+        status = "indexed" if result.get("success") else "failed"
+        documents_collection.update_one(
+            {"id": doc_id},
+            {"$set": {
+                "status": status,
+                "chunks": result.get("chunks", 0),
+                "indexed_at": datetime.utcnow().isoformat(),
+                "error": result.get("error") if not result.get("success") else None
+            }}
+        )
+    except Exception as e:
+        logger.error(f"Ingestion failed: {e}")
+        documents_collection.update_one({"id": doc_id}, {"$set": {"status": "failed", "error": str(e)}})
 
     return {
-        "task_id": task.id,
         "doc_id": doc_id,
         "session_id": session_id,
-        "status": "processing"
-        # client polls GET /task/{task_id}/status to know when it's done
+        "status": "indexed"
     }
     
 @router.post("/documents/assign-session")
@@ -160,8 +166,6 @@ def assign_documents_to_session(
         "updated_count": updated_count
     }
 
-from tasks.ingest_tasks import ingest_url_task  # new task, see below
-
 @router.post("/documents/url")
 async def add_url_document(
     req: UrlDocRequest,
@@ -188,19 +192,26 @@ async def add_url_document(
     }
     documents_collection.insert_one({**doc_record, "_id": doc_id})
 
-    task = ingest_url_task.delay(
-        url=req.url,
-        user_id=current_user.id,
-        session_id=session_id,
-        max_pages=req.max_pages,
-        doc_id=doc_id,
-    )
+    # Run URL ingestion synchronously
+    try:
+        result = await load_url(None, req.url, current_user.id, session_id, req.max_pages, doc_id)
+        status = "indexed" if result.get("success") else "failed"
+        documents_collection.update_one(
+            {"id": doc_id},
+            {"$set": {
+                "status": status,
+                "chunks": result.get("chunks", 0),
+                "error": result.get("error") if not result.get("success") else None
+            }}
+        )
+    except Exception as e:
+        logger.error(f"URL ingestion failed: {e}")
+        documents_collection.update_one({"id": doc_id}, {"$set": {"status": "failed", "error": str(e)}})
 
     return {
-        "task_id": task.id,
         "doc_id": doc_id,
         "session_id": session_id,
-        "status": "processing"
+        "status": "indexed"
     }
 
 from services.rag_services import load_document, load_url, delete_document_from_index  # add this
@@ -281,7 +292,6 @@ def cancel_document_processing(doc_id: str, current_user: UserModel = Depends(ge
     logger.info(f"🛑 Cancellation requested for doc: {doc_id}")
     return {"ok": True, "cancelled": doc_id}
 
-from celery.result import AsyncResult
 
 @router.get("/documents/{doc_id}/status")
 def get_document_status(
@@ -305,21 +315,3 @@ def get_document_status(
         "chunks": doc.get("chunks", 0),
         "error": doc.get("error")
     }
-
-@router.get("/task/{task_id}/status")
-async def get_task_status(task_id: str):
-    result = AsyncResult(task_id)
-    if result.state == "PENDING":
-        return {"state": "PENDING", "status": "Waiting in queue..."}
-    elif result.state == "STARTED":
-        return {"state": "STARTED", "status": result.info.get("status", "Processing...")}
-    elif result.state == "SUCCESS":
-        return {"state": "SUCCESS", "result": result.result}
-    elif result.state == "FAILURE":
-        return {"state": "FAILURE", "error": str(result.info)}
-    return {"state": result.state}
-
-@router.post("/chat")
-async def chat(user_id: int, session_id: str, question: str):
-    task = run_rag_query_task.delay(user_id, session_id, question)
-    return {"task_id": task.id, "status": "queued"}

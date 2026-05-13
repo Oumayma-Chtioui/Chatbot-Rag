@@ -228,13 +228,15 @@ export async function deleteSession(sessionId: string): Promise<any> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Send a chat message and get RAG response
+ * Send a chat message and stream the response token by token.
+ * Yields plain text tokens. The final chunk may start with "__SOURCES__:{json}"
+ * which the caller should parse for sources metadata.
  */
-export async function sendMessage(
+export async function* sendMessage(
   sessionId: string,
   message: string,
   docIds: string[]
-): Promise<any> {
+): AsyncGenerator<string, void, unknown> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: getHeaders(),
@@ -244,65 +246,23 @@ export async function sendMessage(
       doc_ids: docIds,
     }),
   });
-  
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || "Chat failed");
-  }
-  
-  return await res.json();
-}
 
-/**
- * Send message with streaming response
- */
-export async function* sendMessageStream(
-  sessionId: string,
-  message: string,
-  docIds: string[]
-): AsyncGenerator<string, void, unknown> {
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({
-      session_id: sessionId,
-      message,
-      doc_ids: docIds,
-    }),
-  });
-  
   if (!res.ok) {
-    throw new Error("Streaming failed");
+    const errorText = await res.text();
+    throw new Error(`HTTP error! status: ${res.status} — ${errorText}`);
   }
-  
+
   const reader = res.body?.getReader();
   const decoder = new TextDecoder();
-  
+
   if (!reader) return;
-  
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    
-    const chunk = decoder.decode(value);
-    const lines = chunk.split("\n");
-    
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6);
-        if (data === "[DONE]") return;
-        
-        try {
-          const parsed = JSON.parse(data);
-          yield parsed.content || "";
-        } catch {
-          // Skip invalid JSON
-        }
-      }
-    }
+    yield decoder.decode(value, { stream: true });
   }
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Usage Examples
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,14 +314,7 @@ export async function exampleChatFlow(sessionId: string) {
   
   console.log("Response:", response);
   
-  // OR use streaming
-  for await (const chunk of sendMessageStream(
-    sessionId,
-    "Summarize the key points",
-    docIds
-  )) {
-    console.log("Chunk:", chunk);
-  }
+  
 }
 
 /**

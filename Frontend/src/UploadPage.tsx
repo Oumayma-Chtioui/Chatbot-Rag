@@ -14,6 +14,7 @@ interface UploadPageProps {
 }
 
 function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: UploadPageProps) {
+  console.log("UploadPage render, docs:", docs); // ADD THIS  
   const [uploadType, setUploadType] = useState<Doc["type"]>("pdf");
   const [url, setUrl] = useState<string>("");
   const [dragging, setDragging] = useState<boolean>(false);
@@ -66,12 +67,12 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
       if (!result || !result.document) {
         throw new Error("Invalid response from server");
       }
-      setDocs((d: Doc[]=[]) =>
-        d.map((doc: Doc) =>
+      setDocs((d: Doc[] = []) =>
+        (d ?? []).filter(Boolean).map((doc: Doc) =>
           doc.id === tempId
             ? {
-                id: result.document.id,
-                name: result.document.name,
+                id: result.doc_id,
+                name: normalized,
                 type: "url",
                 size: "Web Page",
                 status: "ready",
@@ -120,11 +121,11 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
     setUploading(true);
   try {
     const result = await uploadDocument(file, sessionId);
-    setDocs((d) => d.map((doc) =>
+    setDocs((d) => (d ?? []).filter(Boolean).map((doc) =>
       doc.id === tempId
         ? {
-            id: result.document.id,
-            name: result.document.name,
+            id: result.doc_id,
+            name: file.name,
             type: "pdf",
             size: `${(file.size / 1024).toFixed(0)} KB`,
             status: "ready",
@@ -151,7 +152,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
     { key: "url" as Doc["type"], icon: "🔗", title: "Web URL", sub: "Any public webpage or article" },
   ];
 
-  const allDocsReady = docs.length > 0 && docs.every(doc => doc.status === "ready");
+  const allDocsReady = (docs ?? []).length > 0 && (docs ?? []).every(doc => doc.status === "ready");
 
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -164,7 +165,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
         <div className="topbar-title">Upload Documents</div>
         <div className="topbar-actions">
           <span style={{ fontSize: 12, color: "var(--text3)" }}>
-            {docs.length} document{docs.length !== 1 ? "s" : ""}
+            {(docs ?? []).length} document{(docs ?? []).length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -277,7 +278,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
           </div>
         )}
 
-        {docs.length > 0 && (
+        {(docs ?? []).length > 0 && (
           <div className="loaded-docs animate-in">
             <div className="loaded-docs-header">
               <span>Loaded documents ({docs.length})</span>
@@ -287,7 +288,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
                 <span style={{ fontSize: 11, color: "var(--text3)" }}>Processing...</span>
               )}
             </div>
-            {docs.map((doc: Doc) => (
+            {(docs ?? []).map((doc: Doc) => (
               <div key={doc.id} className="doc-row">
                 <div className="doc-icon">{typeIcons[doc.type]}</div>
                 <div className="doc-info">
@@ -314,7 +315,7 @@ function UploadPage({ docs, setDocs, onToggleSidebar, onStartChat, sessionId }: 
           </div>
         )}
         {/* Start Chat Button */}
-        {docs.length > 0 && (
+        {(docs ?? []).length > 0 && (
           <div style={{ 
             display: 'flex', 
             justifyContent: 'center', 

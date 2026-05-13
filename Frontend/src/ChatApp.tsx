@@ -284,16 +284,16 @@ export default function App() {
           )}
             {view === 'upload' ? (
               <UploadPage
-                docs={pendingDocs}
+                docs={pendingDocs ?? []}
                 setDocs={setPendingDocs}
                 onToggleSidebar={toggleSidebar}
                 onStartChat={handleStartChat}
                 sessionId={pendingSessionId ?? ""}
               />
-            ) : activeSession ? (
+            ) : activeSession && activeSessionId ? (
               <ChatPage
                 key={activeSessionId}
-                sessionId={activeSessionId!}
+                sessionId={activeSessionId}
                 docs={activeSession.docs}
                 messages={activeSession.messages}
                 setMessages={handleUpdateMessages}

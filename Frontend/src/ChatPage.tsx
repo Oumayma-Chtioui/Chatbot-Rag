@@ -42,70 +42,43 @@ function ChatPage({ docs, sessionId, messages, setMessages, onToggleSidebar, onA
     setThinking(true);
 
     try {
-      // Get token from localStorage (assuming you store it after login)
-      const token = localStorage.getItem('token');
-    
-      if (!token) {
-        console.error('No token found');
-        // Redirect to login or show error
-        return;
-      }
-      
-      // Your FastAPI backend URL
-      const API_URL = 'http://localhost:8000';
-    
-      console.log('Sending request to:', `${API_URL}/chat`);
-      console.log('Question:', userMsg.content);
-      
-      const response = await fetch(`${API_URL}/chat`, {  // 👈 USE BACKTICKS, not quotes
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          message: userMsg.content,
-          session_id: sessionId,
-        })
-      });
-      
-      console.log('Response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Format sources properly
-      const sources = data.sources.map((source: any) => ({
-        source: source.source || source,
-        content_preview: source.content_preview || "",
-        confidence: source.confidence ?? null,
-        score: source.score ?? null,
-      }));
-      
-      const reply: Message = {
-        id: Date.now() + 1,
+      const docIds = docs.map((d) => d.id);
+
+      let fullAnswer = "";
+      let sources: any[] = [];
+
+      // Add a placeholder assistant message to stream into
+      const replyId = Date.now() + 1;
+      const placeholderReply: Message = {
+        id: replyId,
         role: "assistant",
-        content: data.answer,
-        sources: sources,
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      };
-      
-      setMessages([...newMsgs, reply]);
-    } catch (error) {
-      console.error('Error getting response:', error);
-      
-      const errorReply: Message = {
-        id: Date.now() + 1,
-        role: "assistant",
-        content: "Sorry, I encountered an error processing your request. Please make sure the backend server is running.",
+        content: "",
         sources: [],
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
-      
-      setMessages([...newMsgs, errorReply]);
+      setMessages([...newMsgs, placeholderReply]);
+
+      for await (const chunk of api.sendMessage(sessionId, userMsg.content, docIds)) {
+        if (chunk.startsWith("__SOURCES__:")) {
+          try {
+            sources = JSON.parse(chunk.slice("__SOURCES__:".length));
+          } catch {
+            // ignore malformed sources
+          }
+        } else {
+          fullAnswer += chunk;
+          setMessages([
+            ...newMsgs,
+            { ...placeholderReply, content: fullAnswer },
+          ]);
+        }
+      }
+
+      // Final update with sources
+      setMessages([
+        ...newMsgs,
+        { ...placeholderReply, content: fullAnswer, sources },
+      ]);
     } finally {
       setThinking(false);
     }
