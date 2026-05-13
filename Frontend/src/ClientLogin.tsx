@@ -1,6 +1,9 @@
 // Frontend/src/ClientLogin.tsx
+// Updated to include TrialChat on the landing page home section.
+
 import { useState, ChangeEvent, FormEvent } from "react";
 import { ClientUser } from "./ClientApp";
+import TrialChat from "./TrialChat";
 
 const API = "http://localhost:8000";
 
@@ -32,6 +35,9 @@ export default function ClientLogin({ onLogin }: Props) {
   const [successMsg, setSuccessMsg] = useState("");
   const [openFaq, setOpenFaq]       = useState<number | null>(null);
   const [section, setSection]       = useState<"home" | "faq" | "contact">("home");
+
+  // Controls whether the right-column shows the trial chat or the auth form
+  const [rightPanel, setRightPanel] = useState<"trial" | "auth">("trial");
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -68,6 +74,16 @@ export default function ClientLogin({ onLogin }: Props) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Called by TrialChat when the visitor hits the message limit or clicks CTA
+  const handleTrialSignUp = () => {
+    setMode("register");
+    setRightPanel("auth");
+  };
+  const handleTrialLogin = () => {
+    setMode("login");
+    setRightPanel("auth");
   };
 
   return (
@@ -132,6 +148,14 @@ export default function ClientLogin({ onLogin }: Props) {
           margin-left: 8px;
         }
         .lp-nav-cta:hover { opacity: 0.88; }
+        .lp-nav-signin {
+          background: none; border: 1px solid var(--border);
+          padding: 7px 14px; border-radius: 7px;
+          font-size: 13px; font-weight: 500; color: var(--text2);
+          cursor: pointer; font-family: 'DM Sans', sans-serif;
+          transition: border-color 0.15s, color 0.15s;
+        }
+        .lp-nav-signin:hover { border-color: var(--accent); color: var(--accent-light); }
 
         /* ── Body Layout ── */
         .lp-body { max-width: 1100px; margin: 0 auto; padding: 0 24px 80px; }
@@ -141,20 +165,20 @@ export default function ClientLogin({ onLogin }: Props) {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 64px;
-          padding-top: 72px;
+          gap: 56px;
+          padding-top: 64px;
         }
 
-        .lp-home-left { flex: 1; }
+        .lp-home-left { flex: 1; min-width: 0; }
 
         .lp-home-right {
-          flex: 0 0 400px;
+          flex: 0 0 420px;
           position: sticky;
-          top: 100px;
+          top: 72px;
         }
 
         /* ── Hero ── */
-        .lp-hero { text-align: left; margin-bottom: 56px; }
+        .lp-hero { text-align: left; margin-bottom: 48px; }
         .lp-hero-eyebrow {
           display: inline-flex; align-items: center; gap: 7px;
           font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
@@ -181,7 +205,7 @@ export default function ClientLogin({ onLogin }: Props) {
           line-height: 1.65; max-width: 480px;
           margin: 0 0 36px;
         }
-        .lp-hero-btns { display: flex; align-items: center; gap: 12px; }
+        .lp-hero-btns { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .lp-btn-primary {
           background: var(--accent); border: none;
           padding: 12px 28px; border-radius: 9px;
@@ -202,24 +226,48 @@ export default function ClientLogin({ onLogin }: Props) {
 
         /* ── Features ── */
         .lp-features {
-          display: grid; grid-template-columns: 1fr;
-          gap: 14px;
+          display: grid; grid-template-columns: 1fr 1fr;
+          gap: 12px;
         }
         .lp-feature {
           background: var(--bg2); border: 1px solid var(--border);
-          border-radius: 12px; padding: 20px 22px;
+          border-radius: 12px; padding: 18px 20px;
           transition: border-color 0.15s;
         }
         .lp-feature:hover { border-color: var(--border2); }
-        .lp-feature-icon { font-size: 20px; color: var(--accent); margin-bottom: 10px; display: block; }
-        .lp-feature-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
-        .lp-feature-desc  { font-size: 13.5px; color: var(--text2); line-height: 1.55; }
+        .lp-feature-icon { font-size: 18px; color: var(--accent); margin-bottom: 8px; display: block; }
+        .lp-feature-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+        .lp-feature-desc  { font-size: 13px; color: var(--text2); line-height: 1.55; }
+
+        /* ── Right Panel ── */
+        .lp-right-panel-switcher {
+          display: flex;
+          background: var(--bg3);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 3px;
+          margin-bottom: 14px;
+          gap: 3px;
+        }
+        .lp-panel-tab {
+          flex: 1; padding: 9px; border: none;
+          background: transparent; border-radius: 8px;
+          font-size: 13px; font-weight: 500; color: var(--text3);
+          cursor: pointer; transition: background 0.18s, color 0.18s;
+          font-family: 'DM Sans', sans-serif;
+          display: flex; align-items: center; justify-content: center; gap: 5px;
+        }
+        .lp-panel-tab.active {
+          background: var(--bg2);
+          color: var(--text);
+          box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
 
         /* ── Auth card ── */
         .lp-auth-card {
           width: 100%;
           background: var(--bg2); border: 1px solid var(--border);
-          border-radius: 16px; padding: 32px;
+          border-radius: 16px; padding: 28px;
           box-shadow: 0 4px 32px rgba(0,0,0,0.1);
         }
         .lp-auth-title {
@@ -264,12 +312,27 @@ export default function ClientLogin({ onLogin }: Props) {
 
         .lp-success { font-size: 13px; padding: 10px; border-radius: 8px; background: rgba(29,158,117,0.08); color: var(--success); margin-bottom: 10px; }
         .lp-error { font-size: 13px; padding: 10px; border-radius: 8px; background: rgba(216,90,48,0.08); color: var(--danger); margin-bottom: 10px; }
-        
+
         .lp-privacy {
           display: flex; align-items: center; justify-content: center;
           gap: 5px; margin-top: 18px; font-size: 12px; color: var(--text3);
         }
         .lp-privacy-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text3); opacity: 0.35; }
+
+        /* ── Try nudge (below trial chat) ── */
+        .lp-trial-nudge {
+          margin-top: 10px;
+          text-align: center;
+          font-size: 12.5px;
+          color: var(--text3);
+        }
+        .lp-trial-nudge button {
+          background: none; border: none;
+          color: var(--accent-light, #a59df0);
+          cursor: pointer; font-family: inherit;
+          font-size: inherit; font-weight: 600;
+          text-decoration: underline; text-underline-offset: 2px;
+        }
 
         /* ── FAQ / Contact Section Defaults ── */
         .lp-section-heading { text-align: center; margin-bottom: 36px; padding-top: 64px; }
@@ -279,13 +342,26 @@ export default function ClientLogin({ onLogin }: Props) {
         .lp-faq-q {
           width: 100%; display: flex; align-items: center; justify-content: space-between;
           padding: 18px 0; background: none; border: none; cursor: pointer;
+          font-family: 'DM Sans', sans-serif;
           font-size: 15px; font-weight: 500; color: var(--text); text-align: left;
         }
+        .lp-faq-chevron { transition: transform 0.2s; font-size: 16px; }
         .lp-faq-chevron.open { transform: rotate(180deg); }
         .lp-faq-a { font-size: 14px; color: var(--text2); line-height: 1.65; padding-bottom: 18px; }
 
         .lp-contact-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; max-width: 600px; margin: 0 auto 32px; }
         .lp-contact-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; }
+        .lp-contact-icon { font-size: 24px; margin-bottom: 10px; color: var(--accent); }
+        .lp-contact-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+        .lp-contact-desc { font-size: 13px; color: var(--text3); margin-bottom: 14px; }
+        .lp-contact-btn {
+          background: var(--bg3); border: 1px solid var(--border);
+          padding: 8px 16px; border-radius: 8px;
+          font-size: 13px; font-weight: 500; color: var(--text2);
+          cursor: pointer; font-family: inherit;
+          transition: border-color 0.15s;
+        }
+        .lp-contact-btn:hover { border-color: var(--accent); }
 
         /* ── Footer ── */
         .lp-footer {
@@ -294,14 +370,15 @@ export default function ClientLogin({ onLogin }: Props) {
           font-size: 12.5px; color: var(--text3);
         }
         .lp-footer-links { display: flex; gap: 20px; }
-        .lp-footer-link { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 12.5px; }
+        .lp-footer-link { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 12.5px; font-family: inherit; }
 
         @media (max-width: 900px) {
-          .lp-home-container { flex-direction: column; gap: 48px; padding-top: 32px; }
+          .lp-home-container { flex-direction: column; gap: 40px; padding-top: 28px; }
           .lp-home-right { flex: 1; width: 100%; position: static; }
           .lp-hero { text-align: center; }
           .lp-hero-btns { justify-content: center; }
-          .lp-hero p { margin: 0 auto 36px; }
+          .lp-hero p { margin: 0 auto 32px; }
+          .lp-features { grid-template-columns: 1fr; }
           .lp-nav { padding: 0 16px; }
           .lp-footer { flex-direction: column; gap: 16px; padding: 20px 16px; }
         }
@@ -318,7 +395,8 @@ export default function ClientLogin({ onLogin }: Props) {
             <button className={`lp-nav-link${section === "home" ? " active" : ""}`} onClick={() => setSection("home")}>Product</button>
             <button className={`lp-nav-link${section === "faq"  ? " active" : ""}`} onClick={() => setSection("faq")}>FAQ</button>
             <button className={`lp-nav-link${section === "contact" ? " active" : ""}`} onClick={() => setSection("contact")}>Contact</button>
-            <button className="lp-nav-cta" onClick={() => { setSection("home"); setMode("register"); }}>Get started</button>
+            <button className="lp-nav-signin" onClick={() => { setSection("home"); setMode("login"); setRightPanel("auth"); }}>Sign in</button>
+            <button className="lp-nav-cta" onClick={() => { setSection("home"); setMode("register"); setRightPanel("auth"); }}>Get started</button>
           </div>
         </nav>
 
@@ -333,7 +411,9 @@ export default function ClientLogin({ onLogin }: Props) {
                   <h1>Your AI chatbot,<br /><em>brilliantly</em> managed.</h1>
                   <p>Deploy intelligent bots, index your documents, and handle every customer conversation — all from one dashboard.</p>
                   <div className="lp-hero-btns">
-                    <button className="lp-btn-primary" onClick={() => setMode("register")}>Create free account →</button>
+                    <button className="lp-btn-primary" onClick={() => { setMode("register"); setRightPanel("auth"); }}>
+                      Create free account →
+                    </button>
                     <button className="lp-btn-ghost" onClick={() => setSection("faq")}>See FAQ</button>
                   </div>
                 </div>
@@ -349,49 +429,131 @@ export default function ClientLogin({ onLogin }: Props) {
                 </div>
               </div>
 
-              {/* Right Column: Auth Card */}
+              {/* Right Column: Trial Chat or Auth Form */}
               <div className="lp-home-right">
-                <div className="lp-auth-card">
-                  <div className="lp-auth-title">{mode === "login" ? "Welcome back" : "Get started free"}</div>
-                  <div className="lp-auth-sub">
-                    {mode === "login" ? "Sign in to your client portal" : "No credit card required · Cancel anytime"}
-                  </div>
-
-                  <div className="lp-tabs">
-                    <button className={`lp-tab${mode === "login" ? " active" : ""}`}
-                      onClick={() => { setMode("login"); setSuccessMsg(""); setError(null); }}>Sign in</button>
-                    <button className={`lp-tab${mode === "register" ? " active" : ""}`}
-                      onClick={() => { setMode("register"); setSuccessMsg(""); setError(null); }}>Create account</button>
-                  </div>
-
-                  <form onSubmit={handleSubmit}>
-                    {mode === "register" && (
-                      <div className="lp-field">
-                        <input className="lp-input" placeholder="Full name" value={name}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} required />
-                      </div>
-                    )}
-                    <div className="lp-field">
-                      <input className="lp-input" type="email" placeholder="Email address" value={email}
-                        onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)} required />
-                    </div>
-                    <div className="lp-field">
-                      <input className="lp-input" type="password" placeholder="Password" value={password}
-                        onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} required />
-                    </div>
-                    {successMsg && <div className="lp-success">{successMsg}</div>}
-                    {error      && <div className="lp-error">{error}</div>}
-                    <button className="lp-submit" type="submit" disabled={loading}>
-                      {loading ? "Please wait…" : mode === "login" ? "Sign in →" : "Create my account →"}
-                    </button>
-                  </form>
-
-                  <div className="lp-privacy">
-                    <span>🔒 Private & secure</span>
-                    <div className="lp-privacy-dot" />
-                    <span>Never shared</span>
-                  </div>
+                {/* Panel switcher tabs */}
+                <div className="lp-right-panel-switcher">
+                  <button
+                    className={`lp-panel-tab${rightPanel === "trial" ? " active" : ""}`}
+                    onClick={() => setRightPanel("trial")}
+                  >
+                    ◎ Try it live
+                  </button>
+                  <button
+                    className={`lp-panel-tab${rightPanel === "auth" ? " active" : ""}`}
+                    onClick={() => setRightPanel("auth")}
+                  >
+                    ✦ {mode === "login" ? "Sign in" : "Create account"}
+                  </button>
                 </div>
+
+                {/* Trial chat panel */}
+                {rightPanel === "trial" && (
+                  <>
+                    <TrialChat onSignUp={handleTrialSignUp} onLogin={handleTrialLogin} />
+                    <div className="lp-trial-nudge">
+                      Like what you see?{" "}
+                      <button onClick={handleTrialSignUp}>Create your free account</button>
+                      {" "}or{" "}
+                      <button onClick={handleTrialLogin}>sign in</button>
+                    </div>
+                  </>
+                )}
+
+                {/* Auth card panel */}
+                {rightPanel === "auth" && (
+                  <div className="lp-auth-card">
+                    <div className="lp-auth-title">
+                      {mode === "login" ? "Welcome back" : "Get started free"}
+                    </div>
+                    <div className="lp-auth-sub">
+                      {mode === "login"
+                        ? "Sign in to your client portal"
+                        : "No credit card required · Cancel anytime"}
+                    </div>
+
+                    <div className="lp-tabs">
+                      <button
+                        className={`lp-tab${mode === "login" ? " active" : ""}`}
+                        onClick={() => { setMode("login"); setSuccessMsg(""); setError(null); }}
+                      >
+                        Sign in
+                      </button>
+                      <button
+                        className={`lp-tab${mode === "register" ? " active" : ""}`}
+                        onClick={() => { setMode("register"); setSuccessMsg(""); setError(null); }}
+                      >
+                        Create account
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleSubmit}>
+                      {mode === "register" && (
+                        <div className="lp-field">
+                          <input
+                            className="lp-input"
+                            placeholder="Full name"
+                            value={name}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+                            required
+                          />
+                        </div>
+                      )}
+                      <div className="lp-field">
+                        <input
+                          className="lp-input"
+                          type="email"
+                          placeholder="Email address"
+                          value={email}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="lp-field">
+                        <input
+                          className="lp-input"
+                          type="password"
+                          placeholder="Password"
+                          value={password}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+                          required
+                        />
+                      </div>
+                      {successMsg && <div className="lp-success">{successMsg}</div>}
+                      {error      && <div className="lp-error">{error}</div>}
+                      <button className="lp-submit" type="submit" disabled={loading}>
+                        {loading
+                          ? "Please wait…"
+                          : mode === "login"
+                          ? "Sign in →"
+                          : "Create my account →"}
+                      </button>
+                    </form>
+
+                    <div className="lp-privacy">
+                      <span>🔒 Private & secure</span>
+                      <div className="lp-privacy-dot" />
+                      <span>Never shared</span>
+                    </div>
+
+                    {/* Link back to trial */}
+                    <div style={{ textAlign: "center", marginTop: 14, fontSize: 12.5, color: "var(--text3)" }}>
+                      Want to try first?{" "}
+                      <button
+                        style={{
+                          background: "none", border: "none",
+                          color: "var(--accent-light, #a59df0)",
+                          cursor: "pointer", fontFamily: "inherit",
+                          fontSize: "inherit", fontWeight: 600,
+                          textDecoration: "underline", textUnderlineOffset: 2,
+                        }}
+                        onClick={() => setRightPanel("trial")}
+                      >
+                        Try the live demo
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -437,7 +599,7 @@ export default function ClientLogin({ onLogin }: Props) {
                   <div className="lp-contact-icon">◎</div>
                   <div className="lp-contact-title">Client Support</div>
                   <div className="lp-contact-desc">Open a ticket in your dashboard.</div>
-                  <button className="lp-contact-btn" onClick={() => { setSection("home"); setMode("login"); }}>
+                  <button className="lp-contact-btn" onClick={() => { setSection("home"); setMode("login"); setRightPanel("auth"); }}>
                     Sign in
                   </button>
                 </div>

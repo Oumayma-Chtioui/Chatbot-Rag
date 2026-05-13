@@ -72,6 +72,9 @@ app.include_router(intervention_router, tags=["Intervention"])
 
 app.include_router(test_sessions.router)
 
+from routers.trial import router as trial_router
+app.include_router(trial_router)
+
 @app.get("/")
 def root():
     return {"status": "NovaMind API running"}
