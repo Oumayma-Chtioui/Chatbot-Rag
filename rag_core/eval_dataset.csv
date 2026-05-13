@@ -1,21 +1,51 @@
 question,ground_truth
-Quel est l'objectif principal du Sprint 1 ?,L'objectif du Sprint 1 est la collecte et le stockage des données dans une base de données vectorielle.
-Quelles sont les sources de données utilisées pour construire la base de connaissances ?,"Les sources de données sont le site officiel de la Faculté des Sciences de Monastir, le site Salima, et des documents PDF contenant des informations sur la scolarité."
-Quel outil a été utilisé pour diviser le texte en segments ?,"RecursiveCharacterTextSplitter du package LangChain, avec chunk_size=700 et chunk_overlap=100."
-Quel modèle d'embedding a été choisi et pourquoi ?,"Le modèle HIT-TMG/KaLM-embedding-multilingual-mini-instruct-v1.5 a été choisi car il est multilingue, adapté à une tâche de retrieval, et peu coûteux en ressources."
-Où sont stockés les embeddings ?,"Les embeddings sont stockés dans une base de données vectorielle ChromaDB, initialisée en mode persistant."
-Quel est l'objectif du Sprint 2 ?,L'objectif du Sprint 2 est l'implémentation du pipeline RAG qui constitue le noyau fonctionnel du chatbot.
-Quel LLM a été sélectionné pour la chaîne RAG et pourquoi ?,"GPT-3.5 Turbo a été sélectionné pour son architecture decoder-only, ses temps de latence raisonnables, l'absence de dépendance aux ressources locales, et sa qualité de réponse élevée."
-Quelle méthode de recherche a été utilisée pour le retriever et quels sont ses paramètres ?,"La méthode MMR (Maximal Marginal Relevance) avec les paramètres k=6 et lambda_mult=0.25."
-Quel modèle est utilisé pour la classification des requêtes utilisateur ?,"Le modèle zero-shot classifier facebook/BART-large-mnli, qui fonctionne en deux étapes : détecter si la requête est générale, puis vérifier si elle concerne le domaine universitaire."
-Quel est le mécanisme de fallback mis en place dans le Sprint 3 ?,"Quand le chatbot ne trouve pas de réponse, il envoie la question par email à un responsable administratif via Gmail en utilisant les protocoles SMTP et TLS. La réponse est ensuite transmise à l'étudiant."
-Quelles métriques d'évaluation ont été utilisées dans le Sprint 4 ?,"Correctness, Answer Relevance, Groundedness, et Retrieval Relevance, évaluées via LangSmith."
-Quel modèle a été choisi comme juge pour l'évaluation et pourquoi ?,"GPT-4o-mini a été choisi comme juge car il est différent du LLM utilisé dans la RAGChain (pour une évaluation plus fiable) et offre un coût réduit par million de tokens."
-Quelle interface utilisateur a été développée pour le chatbot et avec quel outil ?,"Une interface web conviviale a été développée avec Gradio, accessible via un navigateur, permettant la saisie de questions et l'affichage des réponses."
-Comment le chatbot vérifie-t-il l'identité de l'étudiant ?,"Le chatbot demande l'adresse e-mail de l'étudiant, envoie un code de vérification via Gmail, et l'étudiant doit saisir ce code dans le chatbot pour valider son identité."
-Quelle méthode de déploiement a été choisie et pourquoi ?,"La méthode 2 via Gradio avec launch(share=True) générant un lien temporaire valide une semaine, car elle est gratuite et adaptée à la phase de test."
-Quelle est la différence entre RAG et Fine-Tuning selon le rapport ?,"RAG est idéal pour des données évolutives, avec des coûts de maintenance faibles. Le Fine-Tuning nécessite un réentraînement à chaque changement de données et a des coûts initiaux plus élevés, mais offre des réponses plus rapides et cohérentes."
-Quelle méthodologie de gestion de projet a été adoptée ?,La méthode SCRUM (Agile) a été adoptée pour sa capacité d'adaptation aux besoins évolutifs et sa collaboration efficace.
-Quels sont les besoins fonctionnels du chatbot ?,"Répondre aux questions des étudiants sur la scolarité, proposer une redirection vers un responsable administratif en cas d'absence de réponse, mettre à jour la base de données, et supporter plusieurs langues."
-Combien de questions ont été sélectionnées pour le jeu de test d'évaluation ?,12 questions ont été sélectionnées pour le jeu de test.
-Quel outil a été utilisé pour automatiser l'envoi quotidien des réponses aux étudiants ?,"PythonAnywhere a été utilisé pour exécuter le script une fois par jour à une heure spécifique, afin d'envoyer les réponses récupérées depuis la boîte mail du chatbot."
+Quel est le sujet du projet de fin d'études décrit dans ce rapport?,Le sujet est le développement d'un Chatbot Universitaire Intelligent à la Faculté des Sciences de Monastir.
+Quelle méthodologie de gestion de projet a été utilisée?,La méthode Scrum (Agile) a été utilisée avec cinq sprints.
+Quel modèle d'embedding a été choisi pour le chatbot?,Le modèle HIT-TMG/KaLM-embedding-multilingual-mini-instruct-v1.5 de HuggingFace.
+Quelle base de données vectorielle a été utilisée pour stocker les embeddings?,ChromaDB en mode persistant.
+Quel LLM a été sélectionné pour la chaîne RAG et pourquoi?,GPT-3.5 Turbo a été sélectionné pour son architecture decoder-only ses faibles temps de latence et l'absence de dépendance à des ressources locales.
+Quel type de recherche a été configuré pour le retriever?,La recherche MMR (Maximal Marginal Relevance) avec k=6 et lambda_mult=0.25.
+Quel modèle a été utilisé pour le reranker?,Le modèle cross-encoder/ms-marco-MiniLM-L6-v2 de HuggingFace.
+Comment fonctionne le mécanisme de fallback du chatbot?,Lorsque le chatbot ne trouve pas de réponse il envoie la question par e-mail à un responsable administratif via Gmail/SMTP et retransmet la réponse à l'étudiant.
+Quels protocoles ont été utilisés pour l'envoi et la réception des e-mails?,SMTP avec TLS pour l'envoi et IMAP pour la réception.
+Quel outil a été utilisé pour évaluer le chatbot?,LangSmith avec quatre métriques : Correctness Answer Relevance Groundedness et Retrieval Relevance.
+Quel modèle LLM a servi de juge pour l'évaluation?,GPT-4o-mini a été utilisé comme juge car il est différent du LLM de la chaîne RAG et peu coûteux.
+Combien de questions ont été utilisées pour le jeu de test d'évaluation?,12 questions ont été sélectionnées pour le jeu de test.
+Quel framework a été utilisé pour l'interface utilisateur du chatbot?,Gradio a été utilisé pour créer l'interface utilisateur.
+Comment le chatbot vérifie-t-il l'identité de l'étudiant?,Il envoie un code de vérification à l'adresse e-mail de l'étudiant via Gmail et demande à l'étudiant de saisir ce code dans le chatbot.
+Quel outil de classification des requêtes a été utilisé?,Le modèle zero-shot classifier facebook/BART-large-mnli a été utilisé pour classifier les requêtes.
+Quels paramètres de chunking ont été utilisés dans ce projet?,chunk_size=700 et chunk_overlap=100.
+Quelles sont les sources de données utilisées pour construire la base vectorielle?,Le site officiel de la FSM (rubrique Nouveautés et Vie étudiante) et le site Salima (Parcours LMD).
+Comment le déploiement du chatbot a-t-il été réalisé?,Via un lien temporaire Gradio avec launch(share=True) valide pendant une semaine.
+Quelle est la différence principale entre RAG et Fine-Tuning selon le rapport?,RAG est idéal pour des données évolutives et a un coût de maintenance faible ; le Fine-Tuning nécessite un réentraînement dès que les données changent et a des coûts initiaux plus élevés.
+Quel service a été utilisé pour automatiser l'envoi quotidien des réponses aux étudiants?,PythonAnywhere a été utilisé pour exécuter le script une fois par jour.
+Quel est le nom de l'étudiante ayant réalisé ce projet?,Le projet a été réalisé par Belhassen Isra.
+Quelle est la formation visée par ce rapport de stage?,La Licence Génie Logiciel et Système d'Information.
+Qui est l'encadrante universitaire du projet?,Madame Hela Haj Mohamed est l'encadrante universitaire.
+Qui est la présidente du jury?,Madame Ghada Feki est la présidente du jury.
+Qui est la rapporteure du projet?,Madame Hend Basly est la rapporteure du projet.
+Dans quel établissement le stage a-t-il été effectué?,Le stage a été effectué à la Faculté des Sciences de Monastir.
+Quelle est l'année universitaire de ce projet?,L'année universitaire est 2025/2026.
+Quelle est la problématique principale que le chatbot cherche à résoudre?,Les étudiants ont du mal à obtenir rapidement des informations administratives claires sans se déplacer physiquement ou obtenir des réponses erronées sur les réseaux sociaux.
+Pourquoi ChatGPT n'est-il pas adapté selon le rapport?,ChatGPT n'est pas spécialisé pour répondre aux questions spécifiques à la scolarité de la Faculté des Sciences de Monastir et fournit des réponses non pertinentes.
+Quels sont les trois piliers fondamentaux de la méthode Scrum cités dans le rapport?,Les trois piliers sont la Transparence l'Inspection et l'Adaptation.
+Quels sont les quatre rôles clés de Scrum mentionnés dans le rapport?,Les quatre rôles sont le Product Owner le Scrum Master l'Équipe et les Intervenants.
+Quel langage de modélisation a été utilisé pour concevoir le système?,UML (Unified Modeling Language) a été utilisé.
+Quel environnement de développement a été utilisé?,Anaconda avec JupyterLab comme environnement interactif Web.
+Quel langage de programmation a été utilisé?,Python a été utilisé comme langage de programmation.
+Quel outil a été utilisé pour créer les diagrammes UML?,Draw.io a été utilisé pour créer les diagrammes UML.
+Quel éditeur a été utilisé pour la rédaction du rapport?,Overleaf un éditeur LaTeX en ligne collaboratif a été utilisé.
+Combien de sprints composent ce projet et quelle est leur durée totale?,Le projet est composé de 5 sprints pour une durée totale de 12 semaines.
+Quel est l'objectif du Sprint 1?,Créer la base de données vectorielle en collectant structurant et stockant les données pertinentes sur la scolarité de la FSM.
+Quelles techniques ont été utilisées pour récupérer les données web?,Le web scraping avec WebBaseLoader basé sur Beautiful Soup a été utilisé pour extraire le contenu des pages web.
+Quel module a été utilisé pour charger les fichiers PDF?,PyPDFLoader du package langchain_community a été utilisé pour charger et extraire le contenu des PDF.
+Quelles opérations de nettoyage ont été appliquées aux données?,La conversion en minuscules et la suppression de la ponctuation et des caractères spéciaux inutiles ont été appliquées.
+Quel module a été utilisé pour le chunking?,RecursiveCharacterTextSplitter du package LangChain a été utilisé pour segmenter le corpus.
+Pourquoi le prompt du LLM a-t-il été rédigé en anglais?,Parce que l'anglais est considéré comme la langue maternelle des LLM ce qui permet de limiter les risques d'hallucination du modèle.
+Comment le modèle BART classe-t-il les requêtes en deux étapes?,La première étape détermine si la requête est générale ou non ; la deuxième étape identifie si elle concerne le domaine universitaire.
+Quelle adresse e-mail a été créée pour le mécanisme de fallback?,L'adresse fsmchatbot@gmail.com a été créée spécifiquement pour le chatbot.
+Comment l'anonymat de l'étudiant est-il préservé dans le mécanisme de fallback?,Un identifiant utilisateur généré aléatoirement est utilisé pour indexer les questions sans exposer directement l'e-mail de l'étudiant au responsable.
+Quelles sont les quatre métriques d'évaluation utilisées avec LangSmith?,Les métriques sont Correctness Answer Relevance Groundedness et Retrieval Relevance.
+Que mesure la métrique Groundedness?,Elle mesure si la réponse générée est bien basée sur les documents récupérés via le retriever et non inventée par le LLM.
+Quels ont été les résultats généraux de l'évaluation du chatbot?,Le chatbot fonctionne dans un état satisfaisant sans hallucinations majeures et toutes les métriques donnent de bons résultats.
+Quelles sont les perspectives d'évolution citées dans la conclusion?,Enrichir la base documentaire affiner le LLM via du fine-tuning intégrer des fichiers audio et documents et développer une interface complète avec comptes étudiants et historique des conversations.

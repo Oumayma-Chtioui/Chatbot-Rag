@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 
 import re
 from typing import Tuple
+import numpy as np
 
 load_dotenv()
 
@@ -83,6 +84,36 @@ RERANK_API_KEY       = os.getenv("RERANK_API_KEY", "not-needed")
 EMBED_MODEL  = EMBEDDINGS_MODEL   # alias used throughout the file
 JUDGE_MODEL  = LLM_MODEL
 GEN_MODEL    = LLM_MODEL
+
+# ── Cached singleton clients (created once, reused across all questions) ──────
+_llm_client         = None
+_ragas_judge        = None
+_ragas_embeddings   = None
+_pipeline_embeddings = None
+
+def get_llm_client():
+    global _llm_client
+    if _llm_client is None:
+        from langchain_openai import ChatOpenAI
+        _llm_client = ChatOpenAI(
+            model=GEN_MODEL,
+            base_url=LLM_BASE_URL,
+            api_key=LLM_API_KEY,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+        )
+    return _llm_client
+
+def get_pipeline_embeddings():
+    global _pipeline_embeddings
+    if _pipeline_embeddings is None:
+        from langchain_openai import OpenAIEmbeddings
+        _pipeline_embeddings = OpenAIEmbeddings(
+            model=EMBEDDINGS_MODEL,
+            base_url=EMBEDDINGS_BASE_URL,
+            api_key=EMBEDDINGS_API_KEY or "not-needed",
+        )
+    return _pipeline_embeddings
 
 # ── LangChain / FAISS ─────────────────────────────────────────────────────────
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -204,7 +235,11 @@ def get_ragas_judge():
     Returns a RAGAS-compatible LLM object for use as the evaluation judge.
     Priority: Local Ollama (OPENAI_BASE_URL) → OpenRouter → None
     Uses LangchainLLMWrapper with ChatOpenAI pointed at the local Ollama server.
+    Cached as a module-level singleton — smoke-test only runs once.
     """
+    global _ragas_judge
+    if _ragas_judge is not None:
+        return _ragas_judge if _ragas_judge is not False else None
 
     # ── Option 0: Local Ollama via OpenAI-compatible API (primary) ───────────
     try:
@@ -220,6 +255,7 @@ def get_ragas_judge():
         raw.invoke("Reply with one word: ok")
         wrapped = LangchainLLMWrapper(raw)
         print(f"  [judge] {JUDGE_MODEL} @ {LLM_BASE_URL} ready (LangchainLLMWrapper)")
+        _ragas_judge = wrapped
         return wrapped
     except Exception as e:
         print(f"  [judge] Local Ollama judge failed ({e}), trying OpenRouter...")
@@ -270,6 +306,7 @@ def get_ragas_judge():
     #         print(f"  [judge] OpenRouter failed ({e})")
 
     print("  [judge] WARNING: No judge LLM available — LLM metrics will be n/a")
+    _ragas_judge = False  # sentinel so we don't retry on every experiment
     return None
 
 
@@ -277,7 +314,12 @@ def get_ragas_embeddings():
     """
     Uses the remote BGE-M3 embeddings server (EMBEDDINGS_BASE_URL) via
     OpenAIEmbeddings with a custom base_url. Falls back to local HuggingFace.
+    Cached as a module-level singleton — smoke-test only runs once.
     """
+    global _ragas_embeddings
+    if _ragas_embeddings is not None:
+        return _ragas_embeddings if _ragas_embeddings is not False else None
+
     # ── Primary: remote BGE-M3 via OpenAI-compatible embeddings API ──────────
     try:
         from langchain_openai import OpenAIEmbeddings
@@ -287,13 +329,15 @@ def get_ragas_embeddings():
             base_url=EMBEDDINGS_BASE_URL,
             api_key=EMBEDDINGS_API_KEY or "not-needed",
         )
-        # Smoke-test
+        # Smoke-test (once only)
         emb.embed_query("test")
         wrapped = LangchainEmbeddingsWrapper(emb)
         print(f"  [embed] Remote BGE-M3 @ {EMBEDDINGS_BASE_URL} ready")
+        _ragas_embeddings = wrapped
         return wrapped
     except Exception as e:
         print(f"  [embed] Remote embeddings failed ({e})")
+        _ragas_embeddings = False
         return None
 
     # ── HuggingFace fallbacks (disabled) ─────────────────────────────────
@@ -373,14 +417,7 @@ def get_langfuse():
 #     ).content.strip()
 
 def generate_with_openai(system_prompt: str, question: str) -> str:
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(
-        model=GEN_MODEL,
-        base_url=LLM_BASE_URL,
-        api_key=LLM_API_KEY,
-        temperature=LLM_TEMPERATURE,
-        max_tokens=LLM_MAX_TOKENS,
-    )
+    llm = get_llm_client()
     return llm.invoke(f"{system_prompt}\n\nQuestion: {question}\n\nAnswer:").content.strip()
 
 def generate_answer(system_prompt: str, question: str) -> str:
@@ -462,17 +499,11 @@ class RAGPipeline:
         self.use_parent_doc = use_parent_doc
         self.use_hybrid=use_hybrid
 
-        # Remote BGE-M3 embeddings via OpenAI-compatible API
-        from langchain_openai import OpenAIEmbeddings
-        self.embeddings = OpenAIEmbeddings(
-            model=EMBEDDINGS_MODEL,
-            base_url=EMBEDDINGS_BASE_URL,
-            api_key=EMBEDDINGS_API_KEY or 'not-needed',
-        )
+        # Remote BGE-M3 embeddings via OpenAI-compatible API (cached singleton)
+        self.embeddings = get_pipeline_embeddings()
         self.vectorstore = None
         if self.use_cross_encoder:
-            from sentence_transformers import CrossEncoder
-            self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            self.reranker = get_cross_encoder()
 
     # Multi-query retrieval
     def generate_queries(self, question):
@@ -707,7 +738,14 @@ def rerank_contexts(query, contexts, embedder, top_k=6):
 
     return [ctx for ctx, _ in ranked[:top_k]]
 
-import numpy as np
+_cross_encoder = None
+
+def get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        from sentence_transformers import CrossEncoder
+        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _cross_encoder
 
 def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
@@ -779,11 +817,10 @@ def run_ragas(results: list[dict]) -> dict:
         answer_correctness,
     ]
 
-    # timeout = per-call limit in seconds (NOT total run time).
-    # 120s is generous for any API judge under concurrent load.
+    # timeout = per-call limit in seconds. 30s is sufficient for a local/fast judge.
     try:
         from ragas.run_config import RunConfig
-        rc = RunConfig(timeout=120, max_retries=2, max_wait=60)
+        rc = RunConfig(timeout=30, max_retries=1, max_wait=10)
     except Exception:
         rc = None
 
@@ -1003,32 +1040,21 @@ def run_experiment(
     )
     pipeline.ingest_text(corpus_text)
 
-    results = []
-    for idx, row in enumerate(eval_rows):
-        question     = row["question"]
-        ground_truth = row["ground_truth"]
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Per-question Langfuse trace (disabled)
-        # if lf:
-        #     trace_id = lf.create_trace_id()
-        #     with lf.start_as_current_observation(
-        #         as_type="span",
-        #         name=f"{label}: {question[:80]}",
-        #         input={"question": question},
-        #         metadata={
-        #             "experiment": label,
-        #             "ground_truth": ground_truth,
-        #             "tags": ["rag-eval", label],
-        #         },
-        #     ):
-        #         result = pipeline.query(question, lf)
-        #         trace_id = lf.get_current_trace_id()
-        #     result["langfuse_trace_id"] = trace_id
-        # else:
-        #     result = pipeline.query(question, lf=None)
-        result = pipeline.query(question)
-        result["ground_truth"] = ground_truth
-        results.append(result)
+    def _run_one(row):
+        result = pipeline.query(row["question"])
+        result["ground_truth"] = row["ground_truth"]
+        return result
+
+    max_workers = int(os.getenv("EVAL_WORKERS", "4"))
+    results = [None] * len(eval_rows)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_run_one, row): idx for idx, row in enumerate(eval_rows)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
+            print(f"  [{idx+1}/{len(eval_rows)}] done — {results[idx]['latency_s']:.2f}s")
 
     latencies = [r["latency_s"] for r in results]
     p95_latency = float(np.percentile(latencies, 95))
@@ -1184,6 +1210,7 @@ def main():
     parser.add_argument("--out",  default=".",  help="output directory")
     args = parser.parse_args()
 
+    _main_start = time.time()
     print("NovaMind RAG Evaluation Harness")
     print("="*55)
 
@@ -1222,6 +1249,10 @@ def main():
 
     # ── Final full summary ──
     save_results(all_results, out_dir=args.out)
+
+    elapsed = time.time() - _main_start
+    mins, secs = divmod(elapsed, 60)
+    print(f"\nTotal time: {int(mins)}m {secs:.1f}s")
 
 
 if __name__ == "__main__":
