@@ -34,18 +34,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: chatbot_redis
-    restart: always
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: ./Backend
@@ -76,7 +64,6 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
-      REDIS_URL: redis://redis:6379/0
       LLM_MODEL: ${LLM_MODEL}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
 
@@ -89,67 +76,6 @@ services:
     depends_on:
       - postgres
       - mongodb
-      - redis
-
-  worker-ingest:
-    image: chatbot-rag-backend
-    container_name: chatbot_worker_ingest
-    restart: always
-    command: celery -A celery_app worker -Q ingest -c 2 --loglevel=info
-    environment:
-      POSTGRES_URL: ${POSTGRES_URL}
-      MONGO_URL: ${MONGO_URL}
-      MONGO_DB: ${MONGO_DB}
-      SECRET_KEY: ${SECRET_KEY}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_API_KEY2: ${GEMINI_API_KEY2}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
-      REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./Backend:/app
-      - ./uploads:/app/uploads
-      - backend_packages:/usr/local/lib/python3.11/site-packages
-    depends_on:
-      - backend
-      - redis
-      - mongodb
-
-  worker-chat:
-    image: chatbot-rag-backend
-    container_name: chatbot_worker_chat
-    restart: always
-    command: celery -A celery_app worker -Q celery -c 4 --loglevel=info
-    environment:
-      POSTGRES_URL: ${POSTGRES_URL}
-      MONGO_URL: ${MONGO_URL}
-      MONGO_DB: ${MONGO_DB}
-      SECRET_KEY: ${SECRET_KEY}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_API_KEY2: ${GEMINI_API_KEY2}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
-      REDIS_URL: redis://redis:6379/0
-    volumes:
-      - ./Backend:/app
-      - backend_packages:/usr/local/lib/python3.11/site-packages
-    depends_on:
-      - backend
-      - redis
-      - mongodb
-
-  flower:
-    image: chatbot-rag-backend
-    container_name: chatbot_flower
-    restart: always
-    command: celery -A celery_app flower --port=5555
-    environment:
-      REDIS_URL: redis://redis:6379/0
-    ports:
-      - "5555:5555"
-    depends_on:
-      - backend
-      - redis
 
   frontend:
     build:
