@@ -22,6 +22,11 @@ LLM_TEMPERATURE      = 0.0   # Exp 6 winner
 FETCH_K              = 20    # Exp 7 winner
 LAMBDA_MULT          = 0.7   # Exp 7 winner
 N_QUERIES            = 2     # Exp 11 winner
+TOP_K                = 5     # top chunks returned after rerank
+CHUNK_SIZE           = 800   # chunking param
+CHUNK_OVERLAP        = 120   # chunking param
+USE_HYBRID           = True  # BM25 + dense hybrid retrieval
+USE_CROSS_ENCODER    = True  # cross-encoder reranking
 
 
 # ── Cancellation helper ────────────────────────────────────────────────────────
@@ -29,42 +34,42 @@ def is_cancelled(doc_id):
     return doc_id and cancellation_registry.get(doc_id, False)
 
 # ── Model config from environment ─────────────────────────────────────────────
-# ── [SERVER] BGE-M3 remote embeddings — uncomment when server is available ────
-# EMBEDDINGS_BASE_URL = os.getenv("EMBEDDINGS_BASE_URL", "http://192.168.130.177:8081/v1")
-# EMBEDDINGS_MODEL    = os.getenv("EMBEDDINGS_MODEL", "BAAI/bge-m3")
-# EMBEDDINGS_API_KEY  = os.getenv("EMBEDDINGS_API_KEY", "not-needed")
+# ── [SERVER] BGE-M3 remote embeddings ────────────────────────────────────────
+EMBEDDINGS_BASE_URL = os.getenv("EMBEDDINGS_BASE_URL", "http://192.168.130.177:8081/v1")
+EMBEDDINGS_MODEL    = os.getenv("EMBEDDINGS_MODEL", "BAAI/bge-m3")
+EMBEDDINGS_API_KEY  = os.getenv("EMBEDDINGS_API_KEY", "not-needed")
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # Cache Embedding model
 _embeddings = None
 def get_embeddings():
-    """HuggingFace all-MiniLM-L6-v2 embeddings (local).
-    [SERVER] To switch back to remote BGE-M3, uncomment the block below
-    and remove/comment the HuggingFaceEmbeddings block.
+    """Remote BGE-M3 embeddings (primary). Falls back to HuggingFace bge-base-en-v1.5 if server unavailable.
+    [LOCAL] To switch back to local-only, comment the OpenAIEmbeddings block and uncomment HuggingFaceEmbeddings.
     """
     global _embeddings
     if _embeddings is None:
-        # ── [SERVER] Remote BGE-M3 via OpenAI-compatible API ─────────────────
-        # try:
-        #     emb = OpenAIEmbeddings(
-        #         model=EMBEDDINGS_MODEL,
-        #         base_url=EMBEDDINGS_BASE_URL,
-        #         api_key=EMBEDDINGS_API_KEY or "not-needed",
-        #     )
-        #     emb.embed_query("test")  # smoke-test
-        #     _embeddings = emb
-        #     logger.info(f"Remote BGE-M3 embeddings loaded @ {EMBEDDINGS_BASE_URL}")
-        # except Exception as e:
-        #     logger.warning(f"Remote embeddings failed ({e}), falling back to HuggingFace")
-        # 
+        # ── [SERVER] Remote BGE-M3 via OpenAI-compatible API (primary) ───────
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            emb = OpenAIEmbeddings(
+                model=EMBEDDINGS_MODEL,
+                base_url=EMBEDDINGS_BASE_URL,
+                api_key=EMBEDDINGS_API_KEY or "not-needed",
+            )
+            emb.embed_query("test")  # smoke-test
+            _embeddings = emb
+            logger.info(f"Remote BGE-M3 embeddings loaded @ {EMBEDDINGS_BASE_URL}")
+        except Exception as e:
+            logger.warning(f"Remote embeddings failed ({e}), falling back to HuggingFace")
 
-        _embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-base-en-v1.5",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-        logger.info("HuggingFace BAAI/bge-base-en-v1.5 embeddings loaded")
+            # ── [LOCAL] HuggingFace fallback ─────────────────────────────────
+            _embeddings = HuggingFaceEmbeddings(
+                model_name="BAAI/bge-m3",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+            logger.info("HuggingFace BAAI/bge-m3 embeddings loaded (fallback)")
     return _embeddings
 
 
@@ -172,11 +177,11 @@ def generate_queries(question: str, n: int = N_QUERIES) -> list[str]:
     return variants[:n]
 
 
-# ── MMR multi-query retrieval with LLM reranking ──────────────────────────────
+# ── MMR multi-query retrieval with hybrid BM25 + cross-encoder reranking ──────
 def retrieve_with_llm_rerank(
     db: FAISS,
     query: str,
-    top_k: int = 6,
+    top_k: int = TOP_K,
     fetch_k: int = FETCH_K,
     lambda_mult: float = LAMBDA_MULT,
     n_queries: int = N_QUERIES,
@@ -185,9 +190,10 @@ def retrieve_with_llm_rerank(
     """
     1. Rewrite `query` into a keyword-rich retrieval query using conversation history.
     2. Generate n_queries variants of the rewritten query.
-    3. Run MMR search for each variant (fetch_k candidates, lambda_mult diversity).
-    4. Deduplicate candidates.
-    5. LLM-rerank to top_k.
+    3. Run MMR (dense) search for each variant.
+    4. If USE_HYBRID=True, also run BM25 sparse retrieval and merge candidates.
+    5. Deduplicate candidates.
+    6. If USE_CROSS_ENCODER=True, rerank with a cross-encoder; otherwise fall back to LLM reranking.
     Returns (list of Document objects, rewritten_query).
     """
     rewritten_query = rewrite_query_for_retrieval(query, history)
@@ -195,6 +201,7 @@ def retrieve_with_llm_rerank(
     all_docs: list = []
     seen_texts: set = set()
 
+    # ── Dense MMR retrieval ───────────────────────────────────────────────────
     for q in generate_queries(rewritten_query, n_queries):
         results = db.max_marginal_relevance_search(
             q, k=top_k, fetch_k=fetch_k, lambda_mult=lambda_mult
@@ -204,14 +211,63 @@ def retrieve_with_llm_rerank(
                 seen_texts.add(doc.page_content)
                 all_docs.append(doc)
 
-    raw_texts = [d.page_content for d in all_docs]
+    # ── Hybrid: BM25 sparse retrieval ────────────────────────────────────────
+    if USE_HYBRID:
+        try:
+            from rank_bm25 import BM25Okapi
 
-    # LLM rerank
-    reranked_texts = llm_rerank(rewritten_query, raw_texts, top_k=top_k)
+            all_stored_docs = list(db.docstore._dict.values())
+            corpus = [d.page_content for d in all_stored_docs]
+            tokenized_corpus = [doc.lower().split() for doc in corpus]
+            bm25 = BM25Okapi(tokenized_corpus)
 
-    # Reconstruct Document objects in reranked order
-    text_to_doc = {d.page_content: d for d in all_docs}
-    docs = [text_to_doc[t] for t in reranked_texts if t in text_to_doc]
+            tokenized_query = rewritten_query.lower().split()
+            bm25_scores = bm25.get_scores(tokenized_query)
+            top_bm25_indices = sorted(
+                range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
+            )[:fetch_k]
+
+            for idx in top_bm25_indices:
+                doc = all_stored_docs[idx]
+                if doc.page_content not in seen_texts:
+                    seen_texts.add(doc.page_content)
+                    all_docs.append(doc)
+
+            logger.info(f"[hybrid] BM25 added {len(top_bm25_indices)} candidates; total pool: {len(all_docs)}")
+        except ImportError:
+            logger.warning("[hybrid] rank_bm25 not installed — skipping BM25 retrieval. Run: pip install rank-bm25")
+        except Exception as e:
+            logger.warning(f"[hybrid] BM25 retrieval failed: {e}")
+
+    # ── Reranking ─────────────────────────────────────────────────────────────
+    if USE_CROSS_ENCODER:
+        try:
+            from sentence_transformers import CrossEncoder
+
+            ce_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            pairs = [(rewritten_query, doc.page_content) for doc in all_docs]
+            ce_scores = ce_model.predict(pairs)
+            ranked = sorted(zip(all_docs, ce_scores), key=lambda x: x[1], reverse=True)
+            docs = [doc for doc, _ in ranked[:top_k]]
+            logger.info(f"[cross-encoder] Reranked {len(all_docs)} candidates → top {len(docs)}")
+        except ImportError:
+            logger.warning("[cross-encoder] sentence-transformers not installed — falling back to LLM rerank. Run: pip install sentence-transformers")
+            raw_texts = [d.page_content for d in all_docs]
+            reranked_texts = llm_rerank(rewritten_query, raw_texts, top_k=top_k)
+            text_to_doc = {d.page_content: d for d in all_docs}
+            docs = [text_to_doc[t] for t in reranked_texts if t in text_to_doc]
+        except Exception as e:
+            logger.warning(f"[cross-encoder] Reranking failed ({e}) — falling back to LLM rerank")
+            raw_texts = [d.page_content for d in all_docs]
+            reranked_texts = llm_rerank(rewritten_query, raw_texts, top_k=top_k)
+            text_to_doc = {d.page_content: d for d in all_docs}
+            docs = [text_to_doc[t] for t in reranked_texts if t in text_to_doc]
+    else:
+        raw_texts = [d.page_content for d in all_docs]
+        reranked_texts = llm_rerank(rewritten_query, raw_texts, top_k=top_k)
+        text_to_doc = {d.page_content: d for d in all_docs}
+        docs = [text_to_doc[t] for t in reranked_texts if t in text_to_doc]
+
     return docs, rewritten_query
 
 
@@ -304,8 +360,8 @@ async def process_document(documents, file, file_path, user_id, session_id, max_
 
         # Chunking
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=128,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
             separators=["\n\n", "\n", ".", " ", ""],
         )
 
@@ -406,30 +462,36 @@ def search_documents(user_id: int, session_id: str, query: str, k: int = 6):
 
 
 def delete_session_vectors(user_id: int, session_id: str):
-    clean_session_id = session_id.replace("session_", "").replace("session-", "")
-    VECTOR_PATH = os.path.join(
-        os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean_session_id}"
-    )
-    clean_memory_path = session_id.replace("session_", "").replace("session-", "")
-    memory_path = os.path.join(
-        os.getcwd(), "vector_store", f"user_{user_id}", f"session_{clean_memory_path}_memory"
-    )
+    import shutil
 
-    if os.path.exists(VECTOR_PATH):
-        import shutil
-        try:
-            shutil.rmtree(VECTOR_PATH)
-            logger.info(f"🗑️  Deleted vector store: {VECTOR_PATH}")
-            shutil.rmtree(memory_path)
-            logger.info(f"🗑️  Deleted memory store: {memory_path}")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to delete vector store: {e}")
-            return False
-    else:
-        logger.warning(f"⚠️  Vector store not found: {VECTOR_PATH}")
+    clean_id = session_id.replace("session_", "").replace("session-", "")
+
+    base_path    = os.path.join(os.getcwd(), "vector_store", f"user_{user_id}")
+    session_path = os.path.join(base_path, f"session_{clean_id}")
+    memory_path  = os.path.join(base_path, f"session_{clean_id}_memory")
+
+    if not os.path.exists(session_path):
+        logger.warning(f"⚠️  Vector store not found: {session_path}")
         return False
 
+    try:
+        shutil.rmtree(session_path)
+        logger.info(f"🗑️  Deleted vector store: {session_path}")
+
+        if os.path.exists(memory_path):
+            shutil.rmtree(memory_path)
+            logger.info(f"🗑️  Deleted memory store: {memory_path}")
+
+        # Remove the parent user folder if it's now empty
+        if os.path.exists(base_path) and not os.listdir(base_path):
+            shutil.rmtree(base_path)
+            logger.info(f"🗑️  Deleted empty user folder: {base_path}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Failed to delete vector store: {e}")
+        return False
 
 def delete_document_from_index(user_id, session_id, doc_id_to_delete):
     embeddings = get_embeddings()

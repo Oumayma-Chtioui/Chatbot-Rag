@@ -66,6 +66,7 @@ services:
       MISTRAL_API_KEY: ${MISTRAL_API_KEY}
       LLM_MODEL: ${LLM_MODEL}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+        
 
     ports:
       - "8000:8000"
@@ -73,6 +74,7 @@ services:
       - ./Backend:/app
       - ./uploads:/app/uploads
       - backend_packages:/usr/local/lib/python3.11/site-packages
+      - huggingface_cache:/root/.cache/huggingface
     depends_on:
       - postgres
       - mongodb
@@ -88,6 +90,10 @@ services:
     volumes:
       - ./Frontend:/app
       - /app/node_modules
+    env_file:
+    - .env          # ← add this
+    environment:
+    - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
     depends_on:
       - backend
 
@@ -95,3 +101,4 @@ volumes:
   postgres_data:
   mongo_data:
   backend_packages:
+  huggingface_cache:

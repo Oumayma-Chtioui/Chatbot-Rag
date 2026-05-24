@@ -14,8 +14,8 @@ const isClientPortal = path.startsWith('/client')
 const isPreviewPage = path.startsWith('/widget-preview')
 const isVerifyPage = path.startsWith('/verify-email')
 
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID || ""
-
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ""
+console.log("CLIENT_ID:", import.meta.env.VITE_GOOGLE_CLIENT_ID)
 createRoot(document.getElementById('root')).render(
   <GoogleOAuthProvider clientId={CLIENT_ID}>
       {isAdminPortal ? <AdminApp /> :

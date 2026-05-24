@@ -1,12 +1,10 @@
-
-
 import { useState, useRef, useEffect, ChangeEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import "./trial.css";
 const API = "http://localhost:8000";
 
-const MAX_MESSAGES = 6;   // max user turns
-const MAX_FILES    = 1;   // max uploaded files
+const MAX_MESSAGES = 6;
+const MAX_FILES    = 1;
 
 interface Message {
   role: "user" | "assistant";
@@ -17,6 +15,22 @@ interface Message {
 interface Props {
   onSignUp: () => void;
   onLogin:  () => void;
+}
+
+/** Fire-and-forget DELETE using sendBeacon when available (survives page unload),
+ *  falls back to fetch for in-session calls (e.g. explicit dismiss). */
+function deleteSession(sid: string, useBeacon = false) {
+  if (useBeacon && navigator.sendBeacon) {
+    // sendBeacon can only POST — backend has a POST alias at /session/{id}/delete
+    // It survives tab close / refresh / navigation; regular fetch does not.
+    navigator.sendBeacon(
+      `${API}/trial/session/${sid}/delete`,
+      new Blob([], { type: "application/json" })
+    );
+  } else {
+    // SPA route-change unmount — page is still alive, fetch is fine
+    fetch(`${API}/trial/session/${sid}`, { method: "DELETE" }).catch(() => {});
+  }
 }
 
 export default function TrialChat({ onSignUp, onLogin }: Props) {
@@ -34,13 +48,28 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
   const abortRef       = useRef<AbortController | null>(null);
   const sessionRef     = useRef<string | null>(null);
 
-  // Track session in ref too for cleanup on unmount
+  // Keep ref in sync so event listeners always see the latest value
   useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
 
-  // Cleanup on unmount
+  // ── Reliable cleanup on ANY page exit ─────────────────────────────────────
   useEffect(() => {
+    const handleUnload = () => {
+      if (sessionRef.current) {
+        // sendBeacon is the ONLY reliable way to fire a request on tab close /
+        // refresh / navigation. Regular fetch is cancelled by the browser.
+        deleteSession(sessionRef.current, true);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleUnload);
+    // pagehide fires on mobile and bfcache scenarios where beforeunload may not
+    window.addEventListener("pagehide",     handleUnload);
+
     return () => {
-      if (sessionRef.current) deleteSession(sessionRef.current);
+      window.removeEventListener("beforeunload", handleUnload);
+      window.removeEventListener("pagehide",     handleUnload);
+      // Component unmount (SPA route change) — fetch is fine here, page stays open
+      if (sessionRef.current) deleteSession(sessionRef.current, false);
     };
   }, []);
 
@@ -49,7 +78,7 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
 
-  // ── Session helpers ──────────────────────────────────────────────────────
+  // ── Session helpers ────────────────────────────────────────────────────────
 
   const ensureSession = async (): Promise<string> => {
     if (sessionId) return sessionId;
@@ -60,12 +89,7 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
     return session_id;
   };
 
-  const deleteSession = (sid: string) => {
-    // best-effort fire-and-forget cleanup
-    fetch(`${API}/trial/session/${sid}`, { method: "DELETE" }).catch(() => {});
-  };
-
-  // ── File upload ──────────────────────────────────────────────────────────
+  // ── File upload ────────────────────────────────────────────────────────────
 
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -95,7 +119,7 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
     }
   };
 
-  // ── Chat send ────────────────────────────────────────────────────────────
+  // ── Chat send ──────────────────────────────────────────────────────────────
 
   const handleSend = async () => {
     const text = input.trim();
@@ -128,6 +152,8 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
 
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
+        // 429 means the server-side turn limit was hit — treat same as limitHit
+        if (res.status === 429) { setLimitHit(true); return; }
         throw new Error(d.detail || `Error ${res.status}`);
       }
 
@@ -136,7 +162,6 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
       let   full    = "";
       let   sources: string[] = [];
 
-      // Insert empty assistant bubble
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
       while (reader) {
@@ -160,21 +185,19 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
         });
       }
 
-      // Finalise with sources
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = { role: "assistant", content: full, sources };
         return updated;
       });
 
-      // Check if limit now reached
       const newCount = userCount + 1;
       if (newCount >= MAX_MESSAGES) setLimitHit(true);
 
     } catch (err: any) {
       if (err.name === "AbortError") return;
       setError(err.message);
-      setMessages((prev) => prev.slice(0, -1)); // remove empty bubble
+      setMessages((prev) => prev.slice(0, -1));
     } finally {
       setStreaming(false);
       abortRef.current = null;
@@ -193,8 +216,6 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
 
   return (
     <>
-      
-
       <div className="trial-wrap">
         {/* Header */}
         <div className="trial-header">
@@ -227,10 +248,10 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
                   </div>
                   <div>
                     <div className={`trial-bubble ${msg.role === "assistant" ? "bot" : "user"}`}>
-                        {msg.role === "assistant"
-                            ? <ReactMarkdown>{msg.content || ""}</ReactMarkdown>
-                            : msg.content}
-                        {isLastBot && streaming && <span className="trial-cursor" />}
+                      {msg.role === "assistant"
+                        ? <ReactMarkdown>{msg.content || ""}</ReactMarkdown>
+                        : msg.content}
+                      {isLastBot && streaming && <span className="trial-cursor" />}
                     </div>
                     {msg.sources && msg.sources.length > 0 && (
                       <div className="trial-sources">
@@ -326,11 +347,7 @@ export default function TrialChat({ onSignUp, onLogin }: Props) {
           <div className="trial-input-row">
             <textarea
               className="trial-textarea"
-              placeholder={
-                docId
-                  ? "Ask about your document…"
-                  : "Ask me anything…"
-              }
+              placeholder={docId ? "Ask about your document…" : "Ask me anything…"}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}

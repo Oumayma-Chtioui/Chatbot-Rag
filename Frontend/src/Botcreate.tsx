@@ -127,7 +127,7 @@ export default function BotCreate({ existing, onCreated, onCancel }: Props) {
             <textarea
               className="cl-input"
               rows={3}
-              placeholder="Hi! How can I help you today?"
+              placeholder="Hi! How can I help you today? (By Default)"
               value={welcome}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setWelcome(e.target.value)}
               disabled={loading}

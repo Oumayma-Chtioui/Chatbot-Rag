@@ -40,25 +40,15 @@ def _gen_ticket_id() -> str:
     return f"tkt_{suffix}"
 
 
+from services.chatservice import get_session_history
+
 def _fetch_chat_history(bot_id: str, session_id: str) -> list:
     try:
-        from database import messages_collection
-
-        msgs = list(
-            messages_collection
-            .find({"session_id": session_id})
-            .sort("timestamp", 1)
-        )
-
+        msgs = get_session_history(session_id)
         return [
-            {
-                "role": msg["role"],
-                "content": msg["content"],
-                "created_at": str(msg.get("timestamp"))
-            }
-            for msg in msgs
+            {"role": m["role"], "content": m["content"], "created_at": ""}
+            for m in msgs
         ]
-
     except Exception as exc:
         print(f"[INTERVENTION] Could not fetch chat history: {exc}")
         return []

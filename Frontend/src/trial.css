@@ -131,7 +131,10 @@
   border-radius: 14px;
   font-size: 13.5px;
   line-height: 1.6;
-  word-break: break-word;
+   max-width: 80%;
+  min-width: 60px;
+  overflow-wrap: break-word;  /* only breaks when truly necessary */
+  word-break: normal;  
 }
 .trial-bubble.bot {
   background: var(--bg3);

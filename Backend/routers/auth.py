@@ -81,7 +81,7 @@ def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
     from google.auth.transport import requests as g_requests
     import os
  
-    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "970335989460-el84bl527om9eftfscr0vdurf0d7uek6.apps.googleusercontent.com")
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", os.getenv("VITE_GOOGLE_CLIENT_ID"))
  
     try:
         id_info = id_token.verify_oauth2_token(
@@ -95,6 +95,7 @@ def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
     google_id = id_info["sub"]
     email     = id_info["email"]
     name      = id_info.get("name", email.split("@")[0])
+    is_verified=True
  
     # Look up by google_id first, then fall back to email (links existing accounts)
     user = db.query(UserModel).filter(UserModel.google_id == google_id).first()
@@ -102,8 +103,9 @@ def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
         user = db.query(UserModel).filter(UserModel.email == email).first()
         if user:
             user.google_id = google_id   # link existing email account
+            user.is_verified = True
         else:
-            user = UserModel(name=name, email=email, google_id=google_id)
+            user = UserModel(name=name, email=email, google_id=google_id, is_verified=is_verified)
             db.add(user)
     db.commit()
     db.refresh(user)
